@@ -1,9 +1,9 @@
-import Map from './components/Map'
+import VisaMap from "./components/VisaMap";
 
 export default function Home() {
   return (
     <main className="w-full h-screen">
-      <Map />
+      <VisaMap />
     </main>
-  )
+  );
 }

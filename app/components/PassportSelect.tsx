@@ -14,7 +14,7 @@ interface Country {
 
 interface Props {
   value: string;
-  onChange: (iso2: string) => void;
+  onChange: (iso2: string, nameRu?: string) => void;
 }
 
 export default function PassportSelect({ value, onChange }: Props) {
@@ -23,14 +23,18 @@ export default function PassportSelect({ value, onChange }: Props) {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<Country | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     fetch(`${API_URL}/countries`)
       .then((r) => r.json())
-      .then((data) => {
+      .then((data: Country[]) => {
         setCountries(data);
-        const ru = data.find((c: Country) => c.iso2 === "RU");
-        if (ru) setSelected(ru);
+        // Синхронизируем selected с текущим value пропсом
+        if (value) {
+          const found = data.find((c) => c.iso2 === value);
+          if (found) setSelected(found);
+        }
       })
       .catch(console.error);
   }, []);
@@ -40,7 +44,6 @@ export default function PassportSelect({ value, onChange }: Props) {
     function handleClick(e: MouseEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) {
         setOpen(false);
-        setSearch("");
       }
     }
     document.addEventListener("mousedown", handleClick);
@@ -56,40 +59,61 @@ export default function PassportSelect({ value, onChange }: Props) {
 
   function select(country: Country) {
     setSelected(country);
-    onChange(country.iso2);
+    onChange(country.iso2, country.name_ru);
     setOpen(false);
     setSearch("");
+    if (inputRef.current) {
+      inputRef.current.value = "";
+    }
   }
 
+  const handleInputFocus = () => {
+    setOpen(true);
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSearch(e.target.value);
+    setOpen(true);
+  };
+
+  const showOverlay = selected && search === "" && !open;
+
   return (
-    <div ref={ref} className="relative">
-      {/* Кнопка */}
-      <button
-        onClick={() => setOpen(!open)}
-        className="flex items-center gap-2 bg-white/95 backdrop-blur-sm rounded-xl px-4 py-2.5 shadow-lg text-sm font-medium text-slate-700 hover:bg-white transition-colors min-w-48"
+    <div ref={ref} className="relative w-60">
+      {/* Контейнер с input */}
+      <div
+        className="flex items-center gap-2 bg-white/80 backdrop-blur-sm rounded-xl px-4 py-7 shadow-lg cursor-text"
+        onClick={() => { setOpen(true); inputRef.current?.focus(); }}
       >
-        <span className="text-lg">{selected?.flag_emoji ?? "🌍"}</span>
-        <span className="flex-1 text-left">
-          {selected?.name_ru ?? "Выберите паспорт"}
-        </span>
-        <span className="text-slate-400 text-xs">▼</span>
-      </button>
+        {selected && (
+          <span
+            className={`fi fi-${selected.iso2.toLowerCase()} shrink-0 rounded-sm`}
+            style={{ width: "20px", height: "15px" }}
+          />
+        )}
+        {showOverlay ? (
+          /* Двухцветный текст когда страна выбрана и поиск закрыт */
+          <span className="flex-1 text-sm select-none">
+            <span className="text-slate-400 font-normal">Гражданство: </span>
+            <span className="text-slate-800 font-medium">{selected.name_ru}</span>
+          </span>
+        ) : (
+          /* Инпут для поиска */
+          <input
+            ref={inputRef}
+            type="text"
+            placeholder="Гражданство..."
+            value={search}
+            onChange={handleInputChange}
+            onFocus={handleInputFocus}
+            className="flex-1 bg-transparent outline-none text-sm font-medium text-slate-700 placeholder-slate-400"
+          />
+        )}
+      </div>
 
       {/* Дропдаун */}
       {open && (
-        <div className="absolute top-full left-0 mt-1 w-72 bg-white rounded-xl shadow-2xl border border-slate-100 z-50 overflow-hidden">
-          {/* Поиск */}
-          <div className="p-2 border-b border-slate-100">
-            <input
-              autoFocus
-              type="text"
-              placeholder="Поиск страны..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full px-3 py-2 text-sm rounded-lg bg-slate-50 border border-slate-200 outline-none focus:border-blue-400 text-slate-700 placeholder-slate-400"
-            />
-          </div>
-
+        <div className="absolute top-full left-0 w-60 bg-white rounded-xl shadow-2xl border border-slate-100 z-50 overflow-hidden">
           {/* Список */}
           <div className="max-h-72 overflow-y-auto">
             {filtered.length === 0 ? (
@@ -107,9 +131,10 @@ export default function PassportSelect({ value, onChange }: Props) {
                       : "text-slate-700"
                   }`}
                 >
-                  <span className="text-base flex-shrink-0">
-                    {country.flag_emoji}
-                  </span>
+                  <span
+                    className={`fi fi-${country.iso2.toLowerCase()} shrink-0 rounded-sm`}
+                    style={{ width: "20px", height: "15px" }}
+                  />
                   <span className="flex-1">{country.name_ru}</span>
                   <span className="text-xs text-slate-400">{country.iso2}</span>
                 </button>

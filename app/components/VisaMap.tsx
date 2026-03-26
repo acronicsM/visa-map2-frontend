@@ -5,6 +5,7 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import PassportSelect from "./PassportSelect";
 import CountryPopup from './CountryPopup'
+import UserMenu from "./UserMenu";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const MAPTILER_KEY = process.env.NEXT_PUBLIC_MAPTILER_KEY || "";
@@ -28,6 +29,7 @@ export default function VisaMap() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
   const [passport, setPassport] = useState("RU");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   interface CountryInfo {
     iso2: string
@@ -209,8 +211,15 @@ export default function VisaMap() {
     <div className="relative w-full h-full">
       <div ref={mapContainer} className="w-full h-full" />
 
+      {/* Меню профиля как боковая панель */}
+      <UserMenu
+        isOpen={sidebarOpen}
+        onOpen={() => setSidebarOpen(true)}
+        onClose={() => setSidebarOpen(false)}
+      />
+
       {/* Выбор паспорта */}
-      <div className="absolute top-4 left-4 z-10">
+      <div className="absolute top-4 left-16 z-10">
         <PassportSelect value={passport} onChange={handlePassportChange} />
       </div>
 
@@ -232,7 +241,7 @@ export default function VisaMap() {
         ).map(([key, label]) => (
           <div key={key} className="flex items-center gap-2 mb-1.5">
             <div
-              className="w-3 h-3 rounded-sm flex-shrink-0"
+              className="w-3 h-3 rounded-sm shrink-0"
               style={{ backgroundColor: VISA_COLORS[key] }}
             />
             <span className="text-xs text-slate-600">{label}</span>

@@ -208,10 +208,10 @@ export default function FilterSidebar({
                         />
                       </div>
 
-                      <div className="px-3 pb-4 flex flex-col gap-1">
+                      <div className="px-3 pb-4 flex flex-col gap-1 justify-end mx-[2px]">
                         {VISA_CATEGORIES.map(({ key: catKey, label: catLabel, color }) => (
                           <div key={catKey} className="flex items-center justify-between">
-                            <div className="flex items-center gap-2.5">
+                            <div className="flex items-center gap-0.5">
                               <span
                                 className="w-3.5 h-3.5 rounded-full shrink-0"
                                 style={{ backgroundColor: color }}

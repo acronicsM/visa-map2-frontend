@@ -83,7 +83,7 @@ export default function PassportSelect({ value, onChange, bgColor }: Props) {
     <div ref={ref} className="relative w-full">
       {/* Контейнер с input */}
       <div
-        className="flex items-center gap-2 border border-slate-200 rounded-lg px-3 py-2.5 mt-0 cursor-text hover:border-blue-400 transition-colors"
+        className="flex items-center gap-2 border border-slate-200 rounded-lg px-3 py-2.5 mt-0 mb-[5px] cursor-text hover:border-blue-400 transition-colors"
         style={{ backgroundColor: bgColor ?? "#fff" }}
         onClick={() => { setOpen(true); inputRef.current?.focus(); }}
       >

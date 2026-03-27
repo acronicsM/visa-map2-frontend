@@ -272,29 +272,6 @@ export default function VisaMap({
     <div className="relative w-full h-full">
       <div ref={mapContainer} className="w-full h-full" />
 
-      {/* Легенда */}
-      <div className="absolute bottom-8 left-4 right-4 z-10 bg-white/90 backdrop-blur-sm rounded-xl px-5 py-3 shadow-lg flex items-center gap-2 flex-wrap">
-        <span className="text-xs text-slate-400 font-medium mr-1 whitespace-nowrap">
-          Типы виз для граждан <span className="text-slate-600">{passportName}</span>:
-        </span>
-        {VISA_CATEGORIES.map(({ key, label }) => {
-          const isActive = activeCategories.has(key);
-          return (
-            <button
-              key={key}
-              onClick={() => onToggleCategory(key)}
-              className={`flex items-center gap-1 transition-opacity ${isActive ? "opacity-100" : "opacity-30"}`}
-            >
-              <span
-                className="w-2 h-2 rounded-full shrink-0"
-                style={{ backgroundColor: VISA_COLORS[key] }}
-              />
-              <span className="text-xs text-slate-700 whitespace-nowrap">{label}</span>
-            </button>
-          );
-        })}
-      </div>
-
       <CountryPopup
         country={popupCountry}
         visa={popupVisa}

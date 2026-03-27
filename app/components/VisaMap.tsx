@@ -1,11 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useCallback } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import PassportSelect from "./PassportSelect";
-import CountryPopup from './CountryPopup'
-import UserMenu from "./UserMenu";
+import { useState } from "react";
+import CountryPopup from "./CountryPopup";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const MAPTILER_KEY = process.env.NEXT_PUBLIC_MAPTILER_KEY || "";
@@ -14,125 +13,134 @@ const VISA_COLORS: Record<string, string> = {
   free: "#22c55e",
   voa: "#3b82f6",
   evisa: "#eab308",
-  embassy: "#f97316",
+  embassy: "#ef4444",
   restricted: "#ef4444",
   unavailable: "#6b7280",
   unknown: "#1e293b",
 };
 
 const VISA_CATEGORIES: { key: string; label: string }[] = [
-  { key: "evisa", label: "E-visa" },
-  { key: "voa", label: "По прибытии" },
   { key: "free", label: "Без визы" },
-  { key: "restricted", label: "Ограничен въезд" },
-  { key: "unavailable", label: "Закрыто" },
-  { key: "embassy", label: "Виза в посольстве" },
-  { key: "unknown", label: "Нет данных" },
+  { key: "evisa", label: "Электронная виза" },
+  { key: "voa", label: "По прибытию" },
+  { key: "embassy", label: "Нужна виза" },
+  { key: "unavailable", label: "Недоступно" },
 ];
 
-interface VisaItem {
+interface VisaDetail {
+  id: string;
   iso2: string;
   visa_category: string;
+  max_stay_days: number | null;
+  confidence_level: number;
 }
 
-export default function VisaMap() {
+interface CountryInfo {
+  iso2: string;
+  name_ru: string;
+  name_en: string;
+  flag_emoji: string;
+  region: string;
+  subregion: string;
+  capital: string;
+}
+
+interface VisaMapProps {
+  passport: string;
+  passportName: string;
+  onPassportChange: (iso2: string, nameRu?: string) => void;
+  activeCategories: Set<string>;
+  onToggleCategory: (key: string) => void;
+  coloringEnabled: boolean;
+}
+
+function applyVisaColors(
+  mapInstance: maplibregl.Map,
+  visaData: VisaDetail[],
+  active: Set<string>,
+  enabled: boolean,
+) {
+  if (!enabled) {
+    mapInstance.setPaintProperty("countries-fill", "fill-opacity", 0);
+    return;
+  }
+
+  mapInstance.setPaintProperty("countries-fill", "fill-opacity", 0.6);
+
+  if (visaData.length === 0) {
+    mapInstance.setPaintProperty("countries-fill", "fill-color", VISA_COLORS.unknown);
+    return;
+  }
+
+  const colorExpression: unknown[] = ["match", ["get", "iso2"]];
+  visaData.forEach((item) => {
+    const color = active.has(item.visa_category)
+      ? (VISA_COLORS[item.visa_category] ?? VISA_COLORS.unknown)
+      : VISA_COLORS.unknown;
+    colorExpression.push(item.iso2);
+    colorExpression.push(color);
+  });
+  colorExpression.push(VISA_COLORS.unknown);
+
+  mapInstance.setPaintProperty("countries-fill", "fill-color", colorExpression);
+}
+
+export default function VisaMap({
+  passport,
+  passportName,
+  activeCategories,
+  onToggleCategory,
+  coloringEnabled,
+}: VisaMapProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
-  const [passport, setPassport] = useState<string | null>("RU")
-  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const mapLoadedRef = useRef(false);
+  const visaDataRef = useRef<VisaDetail[]>([]);
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeCategoriesRef = useRef(activeCategories);
 
-  interface CountryInfo {
-    iso2: string
-    name_ru: string
-    name_en: string
-    flag_emoji: string
-    region: string
-    subregion: string
-    capital: string
-  }
+  const [popupCountry, setPopupCountry] = useState<CountryInfo | null>(null);
+  const [popupVisa, setPopupVisa] = useState<VisaDetail | null>(null);
+  const [popupPos, setPopupPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
-  interface VisaDetail {
-    id: string
-    iso2: string
-    visa_category: string
-    max_stay_days: number | null
-    confidence_level: number
-  }
+  const coloringEnabledRef = useRef(coloringEnabled);
 
-  const [popupCountry, setPopupCountry] = useState<CountryInfo | null>(null)
-  const [popupVisa, setPopupVisa] = useState<VisaDetail | null>(null)
-  const [popupPos, setPopupPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
-  const visaDataRef = useRef<VisaDetail[]>([])
-  const mapLoadedRef = useRef(false)
-  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const [passportName, setPassportName] = useState<string>("РФ")
-  const allCategories = new Set(VISA_CATEGORIES.map(c => c.key))
-  const [activeCategories, setActiveCategories] = useState<Set<string>>(allCategories)
-
-  function applyVisaColors(
-    mapInstance: maplibregl.Map,
-    visaData: VisaDetail[],
-    active: Set<string>
-  ) {
-    if (visaData.length === 0) {
-      mapInstance.setPaintProperty('countries-fill', 'fill-color', VISA_COLORS.unknown)
-      return
-    }
-
-    const colorExpression: any[] = ['match', ['get', 'iso2']]
-    visaData.forEach(item => {
-      const color = active.has(item.visa_category)
-        ? (VISA_COLORS[item.visa_category] ?? VISA_COLORS.unknown)
-        : VISA_COLORS.unknown
-      colorExpression.push(item.iso2)
-      colorExpression.push(color)
-    })
-    colorExpression.push(VISA_COLORS.unknown)
-
-    mapInstance.setPaintProperty('countries-fill', 'fill-color', colorExpression)
-  }
-
-  async function loadVisaMap(
-    mapInstance: maplibregl.Map,
-    passportIso2: string,
-    active: Set<string>
-  ) {
-    try {
-      if (!mapLoadedRef.current) {
-        return
-      }
-
-      const response = await fetch(`${API_URL}/visa-map/${passportIso2}`)
-      const visaData: VisaDetail[] = await response.json()
-
-      visaDataRef.current = visaData
-      applyVisaColors(mapInstance, visaData, active)
-
-    } catch (error) {
-      console.error('Ошибка загрузки визовых данных:', error)
-    }
-  }
-
-  const handlePassportChange = useCallback((iso2: string, nameRu?: string) => {
-    setPassport(iso2);
-    if (nameRu) setPassportName(nameRu);
-    if (map.current) {
-      loadVisaMap(map.current, iso2, activeCategories);
-    }
+  useEffect(() => {
+    activeCategoriesRef.current = activeCategories;
   }, [activeCategories]);
 
   useEffect(() => {
-    if (passport && map.current) {
-      loadVisaMap(map.current, passport, activeCategories);
-    }
-  }, [passport]);
+    coloringEnabledRef.current = coloringEnabled;
+  }, [coloringEnabled]);
+
+  const loadVisaMap = useCallback(
+    async (passportIso2: string, active: Set<string>, enabled: boolean) => {
+      if (!map.current || !mapLoadedRef.current) return;
+      try {
+        const response = await fetch(`${API_URL}/visa-map/${passportIso2}`);
+        const visaData: VisaDetail[] = await response.json();
+        visaDataRef.current = visaData;
+        applyVisaColors(map.current, visaData, active, enabled);
+      } catch (error) {
+        console.error("Ошибка загрузки визовых данных:", error);
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     if (map.current && visaDataRef.current.length > 0) {
-      applyVisaColors(map.current, visaDataRef.current, activeCategories);
+      applyVisaColors(map.current, visaDataRef.current, activeCategories, coloringEnabled);
     }
-  }, [activeCategories]);
+  }, [activeCategories, coloringEnabled]);
 
+  useEffect(() => {
+    if (passport && mapLoadedRef.current) {
+      loadVisaMap(passport, activeCategoriesRef.current, coloringEnabledRef.current);
+    }
+  }, [passport, loadVisaMap]);
+
+  // Инициализация карты
   useEffect(() => {
     if (map.current || !mapContainer.current) return;
 
@@ -149,7 +157,6 @@ export default function VisaMap() {
 
     map.current.on("load", async () => {
       if (!map.current) return;
-
       try {
         const response = await fetch(`${API_URL}/countries/geodata`);
         const geojson = await response.json();
@@ -196,12 +203,12 @@ export default function VisaMap() {
         });
 
         mapLoadedRef.current = true;
+        await loadVisaMap(passport, activeCategoriesRef.current, coloringEnabledRef.current);
       } catch (error) {
         console.error("Ошибка загрузки геоданных:", error);
       }
     });
 
-    // Hover эффект + всплывающая карточка
     map.current.on("mousemove", "countries-fill", (e) => {
       if (!map.current || !e.features?.length) return;
       map.current.getCanvas().style.cursor = "pointer";
@@ -210,36 +217,36 @@ export default function VisaMap() {
       if (iso2) {
         map.current.setFeatureState(
           { source: "countries", id: iso2 },
-          { hover: true },
+          { hover: true }
         );
       }
 
-      const mouseX = e.originalEvent.clientX
-      const mouseY = e.originalEvent.clientY
+      const mouseX = e.originalEvent.clientX;
+      const mouseY = e.originalEvent.clientY;
 
-      if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current)
+      if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
 
       hoverTimerRef.current = setTimeout(async () => {
-        if (!iso2) return
+        if (!iso2) return;
         try {
-          const response = await fetch(`${API_URL}/countries/${iso2}`)
-          const country = await response.json()
-          const visa = visaDataRef.current.find(v => v.iso2 === iso2) ?? null
-          setPopupCountry(country)
-          setPopupVisa(visa)
-          setPopupPos({ x: mouseX, y: mouseY })
+          const response = await fetch(`${API_URL}/countries/${iso2}`);
+          const country = await response.json();
+          const visa = visaDataRef.current.find((v) => v.iso2 === iso2) ?? null;
+          setPopupCountry(country);
+          setPopupVisa(visa);
+          setPopupPos({ x: mouseX, y: mouseY });
         } catch (error) {
-          console.error('Ошибка загрузки страны:', error)
+          console.error("Ошибка загрузки страны:", error);
         }
-      }, 400)
+      }, 400);
     });
 
     map.current.on("mouseleave", "countries-fill", () => {
       if (!map.current) return;
       map.current.getCanvas().style.cursor = "";
-      if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current)
-      setPopupCountry(null)
-      setPopupVisa(null)
+      if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+      setPopupCountry(null);
+      setPopupVisa(null);
 
       const features = map.current.queryRenderedFeatures(undefined, {
         layers: ["countries-fill"],
@@ -249,7 +256,7 @@ export default function VisaMap() {
         if (iso2) {
           map.current!.setFeatureState(
             { source: "countries", id: iso2 },
-            { hover: false },
+            { hover: false }
           );
         }
       });
@@ -265,54 +272,29 @@ export default function VisaMap() {
     <div className="relative w-full h-full">
       <div ref={mapContainer} className="w-full h-full" />
 
-      {/* Меню профиля как боковая панель */}
-      <UserMenu
-        isOpen={sidebarOpen}
-        onOpen={() => setSidebarOpen(true)}
-        onClose={() => setSidebarOpen(false)}
-      />
-
-      {/* Выбор паспорта */}
-      <div className="absolute top-4 left-16 z-10">
-        <PassportSelect value={passport ?? ""} onChange={(iso2, nameRu) => handlePassportChange(iso2, nameRu)} />
+      {/* Легенда */}
+      <div className="absolute bottom-8 left-4 right-4 z-10 bg-white/90 backdrop-blur-sm rounded-xl px-5 py-3 shadow-lg flex items-center gap-2 flex-wrap">
+        <span className="text-xs text-slate-400 font-medium mr-1 whitespace-nowrap">
+          Типы виз для граждан <span className="text-slate-600">{passportName}</span>:
+        </span>
+        {VISA_CATEGORIES.map(({ key, label }) => {
+          const isActive = activeCategories.has(key);
+          return (
+            <button
+              key={key}
+              onClick={() => onToggleCategory(key)}
+              className={`flex items-center gap-1 transition-opacity ${isActive ? "opacity-100" : "opacity-30"}`}
+            >
+              <span
+                className="w-2 h-2 rounded-full shrink-0"
+                style={{ backgroundColor: VISA_COLORS[key] }}
+              />
+              <span className="text-xs text-slate-700 whitespace-nowrap">{label}</span>
+            </button>
+          );
+        })}
       </div>
 
-      {/* Легенда — горизонтальная панель */}
-      <div className="absolute bottom-8 left-4 z-10 bg-white/90 backdrop-blur-sm rounded-xl px-6 py-4 shadow-lg">
-        <div className="text-xs text-slate-400 font-medium mb-2.5">
-          Типы виз для граждан <span className="text-slate-600">{passportName}</span>
-        </div>
-        <div className="flex items-center gap-3 flex-wrap">
-          {VISA_CATEGORIES.map(({ key, label }) => {
-            const isActive = activeCategories.has(key)
-            return (
-              <button
-                key={key}
-                onClick={() => {
-                  setActiveCategories(prev => {
-                    const next = new Set(prev)
-                    if (next.has(key)) {
-                      next.delete(key)
-                    } else {
-                      next.add(key)
-                    }
-                    return next
-                  })
-                }}
-                className={`flex items-center gap-1 transition-opacity ${isActive ? "opacity-100" : "opacity-30"}`}
-              >
-                <span
-                  className="w-2 h-2 rounded-full shrink-0"
-                  style={{ backgroundColor: VISA_COLORS[key] }}
-                />
-                <span className="text-xs text-slate-700 whitespace-nowrap">{label}</span>
-              </button>
-            )
-          })}
-        </div>
-      </div>
-
-      {/* Карточка страны — tooltip */}
       <CountryPopup
         country={popupCountry}
         visa={popupVisa}

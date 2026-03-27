@@ -15,9 +15,10 @@ interface Country {
 interface Props {
   value: string;
   onChange: (iso2: string, nameRu?: string) => void;
+  bgColor?: string;
 }
 
-export default function PassportSelect({ value, onChange }: Props) {
+export default function PassportSelect({ value, onChange, bgColor }: Props) {
   const [countries, setCountries] = useState<Country[]>([]);
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
@@ -79,10 +80,11 @@ export default function PassportSelect({ value, onChange }: Props) {
   const showOverlay = selected && search === "" && !open;
 
   return (
-    <div ref={ref} className="relative w-60">
+    <div ref={ref} className="relative w-full">
       {/* Контейнер с input */}
       <div
-        className="flex items-center gap-2 bg-white/80 backdrop-blur-sm rounded-xl px-4 py-7 shadow-lg cursor-text"
+        className="flex items-center gap-2 border border-slate-200 rounded-lg px-3 py-2.5 mt-0 cursor-text hover:border-blue-400 transition-colors"
+        style={{ backgroundColor: bgColor ?? "#fff" }}
         onClick={() => { setOpen(true); inputRef.current?.focus(); }}
       >
         {selected && (
@@ -92,30 +94,29 @@ export default function PassportSelect({ value, onChange }: Props) {
           />
         )}
         {showOverlay ? (
-          /* Двухцветный текст когда страна выбрана и поиск закрыт */
-          <span className="flex-1 text-sm select-none">
-            <span className="text-slate-400 font-normal">Гражданство: </span>
-            <span className="text-slate-800 font-medium">{selected.name_ru}</span>
+          <span className="flex-1 text-sm select-none text-slate-700 truncate">
+            {selected.name_ru}
           </span>
         ) : (
-          /* Инпут для поиска */
           <input
             ref={inputRef}
             type="text"
-            placeholder="Гражданство..."
+            placeholder="— Выберите паспорт —"
             value={search}
             onChange={handleInputChange}
             onFocus={handleInputFocus}
-            className="flex-1 bg-transparent outline-none text-sm font-medium text-slate-700 placeholder-slate-400"
+            className="flex-1 bg-transparent outline-none text-sm text-slate-700 placeholder-slate-400 min-w-0"
           />
         )}
+        <svg className="w-4 h-4 text-slate-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
       </div>
 
       {/* Дропдаун */}
       {open && (
-        <div className="absolute top-full left-0 w-60 bg-white rounded-xl shadow-2xl border border-slate-100 z-50 overflow-hidden">
-          {/* Список */}
-          <div className="max-h-72 overflow-y-auto">
+        <div className="absolute top-full left-0 right-0 bg-white rounded-lg shadow-xl border border-slate-100 z-50 overflow-hidden mt-1">
+          <div className="max-h-56 overflow-y-auto">
             {filtered.length === 0 ? (
               <div className="px-4 py-3 text-sm text-slate-400 text-center">
                 Ничего не найдено
@@ -125,7 +126,7 @@ export default function PassportSelect({ value, onChange }: Props) {
                 <button
                   key={country.iso2}
                   onClick={() => select(country)}
-                  className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-slate-50 transition-colors text-left ${
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-slate-50 transition-colors text-left ${
                     country.iso2 === value
                       ? "bg-blue-50 text-blue-700"
                       : "text-slate-700"
@@ -135,8 +136,8 @@ export default function PassportSelect({ value, onChange }: Props) {
                     className={`fi fi-${country.iso2.toLowerCase()} shrink-0 rounded-sm`}
                     style={{ width: "20px", height: "15px" }}
                   />
-                  <span className="flex-1">{country.name_ru}</span>
-                  <span className="text-xs text-slate-400">{country.iso2}</span>
+                  <span className="flex-1 truncate">{country.name_ru}</span>
+                  <span className="text-xs text-slate-400 shrink-0">{country.iso2}</span>
                 </button>
               ))
             )}

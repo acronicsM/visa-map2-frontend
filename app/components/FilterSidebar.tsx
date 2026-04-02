@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useRef, useState } from "react";
 import PassportSelect from "./PassportSelect";
+import type { MapColorMode } from "../types/map";
 
 const VISA_CATEGORIES: { key: string; label: string; color: string }[] = [
   { key: "free", label: "Без визы", color: "#22c55e" },
@@ -11,24 +12,139 @@ const VISA_CATEGORIES: { key: string; label: string; color: string }[] = [
   { key: "unavailable", label: "Недоступно", color: "#6b7280" },
 ];
 
+const SAFETY_LEVELS: { key: string; label: string; color: string }[] = [
+  { key: "safe", label: "Безопасно", color: "#22c55e" },
+  { key: "unsafe", label: "Риски", color: "#eab308" },
+  { key: "dangerous", label: "Опасно", color: "#ef4444" },
+];
+
+const COST_LEVELS: { key: string; label: string; color: string }[] = [
+  { key: "low", label: "Недорого", color: "#22c55e" },
+  { key: "medium", label: "Средний уровень", color: "#eab308" },
+  { key: "high", label: "Дорого", color: "#ef4444" },
+];
+
 const FILTER_GROUPS = [
-  { key: "citizenship", label: "Гражданство" },
-  { key: "season", label: "Сезонность" },
-  { key: "flight", label: "Прямой рейс" },
-  { key: "distance", label: "Дальность перелёта" },
-  { key: "budget", label: "Бюджет" },
-] as const;
+  { key: "citizenship" as const, label: "Гражданство" },
+  { key: "safety" as const, label: "Безопасность" },
+  { key: "budget" as const, label: "Стоимость отдыха" },
+  { key: "season" as const, label: "Сезонность" },
+  { key: "flight" as const, label: "Прямой рейс" },
+  { key: "distance" as const, label: "Дальность перелёта" },
+];
 
 type FilterGroupKey = (typeof FILTER_GROUPS)[number]["key"];
 
-const STUB_KEYS = new Set<FilterGroupKey>(["season", "flight", "distance", "budget"]);
+const STUB_KEYS = new Set<FilterGroupKey>(["flight", "distance"]);
+
+const MONTH_OPTIONS: { value: number; label: string }[] = [
+  { value: 1, label: "Январь" },
+  { value: 2, label: "Февраль" },
+  { value: 3, label: "Март" },
+  { value: 4, label: "Апрель" },
+  { value: 5, label: "Май" },
+  { value: 6, label: "Июнь" },
+  { value: 7, label: "Июль" },
+  { value: 8, label: "Август" },
+  { value: 9, label: "Сентябрь" },
+  { value: 10, label: "Октябрь" },
+  { value: 11, label: "Ноябрь" },
+  { value: 12, label: "Декабрь" },
+];
+
+function SeasonMonthRail({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (month: number) => void;
+}) {
+  const groupRef = useRef<HTMLDivElement>(null);
+
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+      e.preventDefault();
+      onChange(Math.min(12, value + 1));
+    } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+      e.preventDefault();
+      onChange(Math.max(1, value - 1));
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      onChange(1);
+    } else if (e.key === "End") {
+      e.preventDefault();
+      onChange(12);
+    }
+  }
+
+  function selectMonth(month: number) {
+    onChange(month);
+    groupRef.current?.focus();
+  }
+
+  const monthLabel = MONTH_OPTIONS[value - 1]?.label ?? "";
+
+  const sepClass =
+    "w-px shrink-0 self-stretch bg-[#c4c0b8] min-h-9 pointer-events-none select-none";
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div
+        ref={groupRef}
+        role="radiogroup"
+        aria-label="Месяц для карты погоды"
+        tabIndex={0}
+        onKeyDown={handleKeyDown}
+        className="flex w-full items-stretch overflow-hidden rounded-md border border-[#ddd9d0] bg-white outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#edeae3]"
+      >
+        <span className={sepClass} aria-hidden />
+        {MONTH_OPTIONS.map((m) => {
+          const selected = value === m.value;
+          return (
+            <Fragment key={m.value}>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                aria-label={m.label}
+                tabIndex={-1}
+                onClick={() => selectMonth(m.value)}
+                className="min-h-9 min-w-0 flex-1 px-0.5 py-1 text-center text-[11px] font-medium tabular-nums leading-none transition-colors hover:bg-black/5 sm:text-xs"
+                style={{
+                  color: selected ? "#2563eb" : "#6b7280",
+                  backgroundColor: selected ? "rgba(59, 130, 246, 0.12)" : "transparent",
+                }}
+              >
+                {m.value}
+              </button>
+              <span className={sepClass} aria-hidden />
+            </Fragment>
+          );
+        })}
+      </div>
+      <p className="text-center text-[14px]" style={{ color: "#374151" }} aria-live="polite">
+        {monthLabel}
+      </p>
+    </div>
+  );
+}
 
 interface FilterSidebarProps {
   passport: string;
-  passportName: string;
   onPassportChange: (iso2: string, nameRu?: string) => void;
   activeCategories: Set<string>;
   onToggleCategory: (key: string) => void;
+  activeSafetyLevels: Set<string>;
+  onToggleSafetyLevel: (key: string) => void;
+  activeCostLevels: Set<string>;
+  onToggleCostLevel: (key: string) => void;
+  mapColorMode: MapColorMode;
+  onMapColorModeChange: (mode: MapColorMode) => void;
+  seasonMonth: number;
+  onSeasonMonthChange: (month: number) => void;
+  activeSeasonTypes: Set<string>;
+  onToggleSeasonType: (key: string) => void;
+  seasonFilterRows: { key: string; label: string; color: string }[];
   coloringEnabled: boolean;
   onColoringEnabledChange: (enabled: boolean) => void;
   isOpen: boolean;
@@ -92,15 +208,27 @@ export default function FilterSidebar({
   onPassportChange,
   activeCategories,
   onToggleCategory,
+  activeSafetyLevels,
+  onToggleSafetyLevel,
+  activeCostLevels,
+  onToggleCostLevel,
+  mapColorMode,
+  onMapColorModeChange,
+  seasonMonth,
+  onSeasonMonthChange,
+  activeSeasonTypes,
+  onToggleSeasonType,
+  seasonFilterRows,
   coloringEnabled,
   onColoringEnabledChange,
   isOpen,
   onToggleSidebar,
 }: FilterSidebarProps) {
-  const [activeColorGroup, setActiveColorGroup] = useState<FilterGroupKey>("citizenship");
-  const [openSections, setOpenSections] = useState<Set<FilterGroupKey>>(new Set(["citizenship"]));
+  const [openSections, setOpenSections] = useState<Set<FilterGroupKey>>(
+    () => new Set(["citizenship"]),
+  );
 
-  function toggleSection(key: FilterGroupKey) {
+  function toggleSectionOpen(key: FilterGroupKey) {
     setOpenSections((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
@@ -113,10 +241,10 @@ export default function FilterSidebar({
     e.stopPropagation();
     if (STUB_KEYS.has(key)) return;
 
-    if (activeColorGroup === key && coloringEnabled) {
+    if (mapColorMode === key && coloringEnabled) {
       onColoringEnabledChange(false);
     } else {
-      setActiveColorGroup(key);
+      onMapColorModeChange(key as MapColorMode);
       onColoringEnabledChange(true);
       setOpenSections((prev) => new Set(prev).add(key));
     }
@@ -135,7 +263,6 @@ export default function FilterSidebar({
       {isOpen && (
         <div className="flex flex-col h-full overflow-y-auto" style={{ minWidth: "280px" }}>
 
-          {/* ФИЛЬТРЫ — заголовок + кнопка сворачивания */}
           <div className="flex items-center justify-between px-5 pt-5 pb-3">
             <span
               className="text-xs font-semibold tracking-widest"
@@ -156,12 +283,10 @@ export default function FilterSidebar({
             </button>
           </div>
 
-          {/* Секции фильтров */}
           <div className="flex flex-col mx-3">
             {FILTER_GROUPS.map(({ key, label }, idx) => {
-              const isColorActive = activeColorGroup === key && coloringEnabled;
+              const isColorActive = mapColorMode === key && coloringEnabled;
               const isSectionOpen = openSections.has(key);
-              const hasCitizenshipContent = key === "citizenship";
 
               return (
                 <div
@@ -171,12 +296,13 @@ export default function FilterSidebar({
                     borderTop: idx > 0 ? "1px solid #ddd9d0" : undefined,
                   }}
                 >
-                  {/* Заголовок секции */}
                   <div
                     role="button"
                     tabIndex={0}
-                    onClick={() => toggleSection(key)}
-                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") toggleSection(key); }}
+                    onClick={() => toggleSectionOpen(key)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") toggleSectionOpen(key);
+                    }}
                     className="w-full flex items-center justify-between px-3 py-3 cursor-pointer hover:bg-black/3 transition-colors select-none rounded"
                   >
                     <span className="text-[15px] font-medium" style={{ color: "#374151" }}>
@@ -191,8 +317,7 @@ export default function FilterSidebar({
                     </div>
                   </div>
 
-                  {/* Содержимое секции */}
-                  {isSectionOpen && hasCitizenshipContent && (
+                  {isSectionOpen && key === "citizenship" && (
                     <div>
                       <div className="px-3 pb-3">
                         <span
@@ -230,7 +355,98 @@ export default function FilterSidebar({
                     </div>
                   )}
 
-                  {isSectionOpen && !hasCitizenshipContent && (
+                  {isSectionOpen && key === "safety" && (
+                    <div className="px-3 pb-4 flex flex-col gap-1 mx-[2px]">
+                      {SAFETY_LEVELS.map(({ key: levKey, label: levLabel, color }) => (
+                        <div key={levKey} className="flex items-center justify-between">
+                          <div className="flex items-center gap-0.5">
+                            <span
+                              className="w-3.5 h-3.5 rounded-full shrink-0"
+                              style={{ backgroundColor: color }}
+                            />
+                            <span className="text-[14px]" style={{ color: "#374151" }}>
+                              {levLabel}
+                            </span>
+                          </div>
+                          <Toggle
+                            checked={activeSafetyLevels.has(levKey)}
+                            onChange={() => onToggleSafetyLevel(levKey)}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {isSectionOpen && key === "budget" && (
+                    <div className="px-3 pb-4 flex flex-col gap-1 mx-[2px]">
+                      {COST_LEVELS.map(({ key: levKey, label: levLabel, color }) => (
+                        <div key={levKey} className="flex items-center justify-between">
+                          <div className="flex items-center gap-0.5">
+                            <span
+                              className="w-3.5 h-3.5 rounded-full shrink-0"
+                              style={{ backgroundColor: color }}
+                            />
+                            <span className="text-[14px]" style={{ color: "#374151" }}>
+                              {levLabel}
+                            </span>
+                          </div>
+                          <Toggle
+                            checked={activeCostLevels.has(levKey)}
+                            onChange={() => onToggleCostLevel(levKey)}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {isSectionOpen && key === "season" && (
+                    <div className="px-3 pb-4 mx-[2px] flex flex-col gap-3">
+                      <SeasonMonthRail
+                        value={seasonMonth}
+                        onChange={(month) => {
+                          onSeasonMonthChange(month);
+                          onMapColorModeChange("season");
+                          onColoringEnabledChange(true);
+                          setOpenSections((prev) => new Set(prev).add("season"));
+                        }}
+                      />
+                      {seasonFilterRows.length === 0 ? (
+                        <p className="text-[13px] leading-snug" style={{ color: "#9ca3af" }}>
+                          Список сезонов подставится из данных выбранного месяца после загрузки слоя
+                          (включите «цвет» для «Сезонность»).
+                        </p>
+                      ) : (
+                        <div className="flex flex-col gap-1">
+                          {seasonFilterRows.map(({ key: rowKey, label: rowLabel, color }) => (
+                            <div
+                              key={rowKey === "" ? "__empty_season__" : rowKey}
+                              className="flex items-center justify-between"
+                            >
+                              <div className="flex items-center gap-0.5 min-w-0">
+                                <span
+                                  className="w-3.5 h-3.5 rounded-full shrink-0"
+                                  style={{ backgroundColor: color }}
+                                />
+                                <span
+                                  className="text-[14px] truncate"
+                                  style={{ color: "#374151" }}
+                                  title={rowLabel}
+                                >
+                                  {rowLabel}
+                                </span>
+                              </div>
+                              <Toggle
+                                checked={activeSeasonTypes.has(rowKey)}
+                                onChange={() => onToggleSeasonType(rowKey)}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {isSectionOpen && STUB_KEYS.has(key) && (
                     <div className="px-3 pb-4">
                       <span className="text-[13px]" style={{ color: "#9ca3af" }}>
                         Скоро будет доступно

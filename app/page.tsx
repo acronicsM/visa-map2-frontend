@@ -1,24 +1,63 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import VisaMap from "./components/VisaMap";
 import FilterSidebar from "./components/FilterSidebar";
 import TravelCollections from "./components/TravelCollections";
 import ArticleSection from "./components/ArticleSection";
 import Footer from "./components/Footer";
+import type { MapColorMode } from "./types/map";
+import { getSeasonFilterRowPresentation } from "./lib/season-colors";
 
 const ALL_CATEGORIES = new Set(["free", "evisa", "voa", "embassy", "unavailable"]);
+const ALL_SAFETY_LEVELS = new Set(["safe", "unsafe", "dangerous"]);
+const ALL_COST_LEVELS = new Set(["low", "medium", "high"]);
 
 export default function Home() {
   const [passport, setPassport] = useState("RU");
-  const [passportName, setPassportName] = useState("Россия");
   const [activeCategories, setActiveCategories] = useState<Set<string>>(new Set(ALL_CATEGORIES));
+  const [activeSafetyLevels, setActiveSafetyLevels] = useState<Set<string>>(
+    () => new Set(ALL_SAFETY_LEVELS),
+  );
+  const [activeCostLevels, setActiveCostLevels] = useState<Set<string>>(
+    () => new Set(ALL_COST_LEVELS),
+  );
+  const [mapColorMode, setMapColorMode] = useState<MapColorMode>("citizenship");
+  const [seasonMonth, setSeasonMonth] = useState(() => new Date().getMonth() + 1);
+  const [distinctSeasonKeys, setDistinctSeasonKeys] = useState<string[]>([]);
+  const [activeSeasonTypes, setActiveSeasonTypes] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [coloringEnabled, setColoringEnabled] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
-  function handlePassportChange(iso2: string, nameRu?: string) {
+  const seasonMonthRef = useRef(seasonMonth);
+
+  useEffect(() => {
+    seasonMonthRef.current = seasonMonth;
+  }, [seasonMonth]);
+
+  const handleSeasonMonthChange = useCallback((month: number) => {
+    setSeasonMonth(month);
+  }, []);
+
+  const onSeasonDistinctKeysLoaded = useCallback((loadedMonth: number, keys: string[]) => {
+    if (loadedMonth !== seasonMonthRef.current) return;
+    setDistinctSeasonKeys(keys);
+    setActiveSeasonTypes(new Set(keys));
+  }, []);
+
+  const seasonFilterRows = useMemo(
+    () =>
+      distinctSeasonKeys.map((k) => ({
+        key: k,
+        ...getSeasonFilterRowPresentation(k),
+      })),
+    [distinctSeasonKeys],
+  );
+
+  function handlePassportChange(iso2: string) {
     setPassport(iso2);
-    if (nameRu) setPassportName(nameRu);
   }
 
   function handleToggleCategory(key: string) {
@@ -33,21 +72,57 @@ export default function Home() {
     });
   }
 
+  function handleToggleSafetyLevel(key: string) {
+    setActiveSafetyLevels((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function handleToggleCostLevel(key: string) {
+    setActiveCostLevels((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function handleToggleSeasonType(key: string) {
+    setActiveSeasonTypes((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
   return (
     <main className="w-full">
       <section className="w-full flex" style={{ height: "100vh" }}>
         <FilterSidebar
           passport={passport}
-          passportName={passportName}
           onPassportChange={handlePassportChange}
           activeCategories={activeCategories}
           onToggleCategory={handleToggleCategory}
+          activeSafetyLevels={activeSafetyLevels}
+          onToggleSafetyLevel={handleToggleSafetyLevel}
+          activeCostLevels={activeCostLevels}
+          onToggleCostLevel={handleToggleCostLevel}
+          mapColorMode={mapColorMode}
+          onMapColorModeChange={setMapColorMode}
+          seasonMonth={seasonMonth}
+          onSeasonMonthChange={handleSeasonMonthChange}
+          activeSeasonTypes={activeSeasonTypes}
+          onToggleSeasonType={handleToggleSeasonType}
+          seasonFilterRows={seasonFilterRows}
           coloringEnabled={coloringEnabled}
           onColoringEnabledChange={setColoringEnabled}
           isOpen={sidebarOpen}
           onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
         />
-        {/* Кнопка открытия когда сайдбар закрыт */}
         {!sidebarOpen && (
           <button
             onClick={() => setSidebarOpen(true)}
@@ -64,10 +139,14 @@ export default function Home() {
         <div className="flex-1 relative overflow-hidden">
           <VisaMap
             passport={passport}
-            passportName={passportName}
-            onPassportChange={handlePassportChange}
             activeCategories={activeCategories}
-            onToggleCategory={handleToggleCategory}
+            mapColorMode={mapColorMode}
+            seasonMonth={seasonMonth}
+            activeSafetyLevels={activeSafetyLevels}
+            activeCostLevels={activeCostLevels}
+            activeSeasonTypes={activeSeasonTypes}
+            seasonDistinctKeys={distinctSeasonKeys}
+            onSeasonDistinctKeysLoaded={onSeasonDistinctKeysLoaded}
             coloringEnabled={coloringEnabled}
           />
         </div>

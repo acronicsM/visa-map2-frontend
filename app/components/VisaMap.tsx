@@ -95,6 +95,8 @@ interface VisaMapProps {
   selectedLanguageCodes: Set<string>;
   /** iso2 (верхний регистр) → коды языков страны */
   officialLanguageCodesByIso: Map<string, string[]>;
+  /** Список iso2, проходящих тот же составной фильтр, что и раскраска карты */
+  onMatchingIso2sChange?: (iso2s: string[]) => void;
 }
 
 function normAttr(raw: string | null | undefined): string {
@@ -307,6 +309,7 @@ export default function VisaMap({
   coloringEnabled,
   selectedLanguageCodes,
   officialLanguageCodesByIso,
+  onMatchingIso2sChange,
 }: VisaMapProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
@@ -337,6 +340,7 @@ export default function VisaMap({
   const runSeasonGeodataFetchRef = useRef<() => void>(() => {});
   const selectedLanguageCodesRef = useRef(selectedLanguageCodes);
   const officialLanguageCodesByIsoRef = useRef(officialLanguageCodesByIso);
+  const onMatchingIso2sChangeRef = useRef(onMatchingIso2sChange);
 
   const [popupCountry, setPopupCountry] = useState<CountryInfo | null>(null);
   const [popupVisa, setPopupVisa] = useState<VisaDetail | null>(null);
@@ -385,6 +389,10 @@ export default function VisaMap({
   useEffect(() => {
     officialLanguageCodesByIsoRef.current = officialLanguageCodesByIso;
   }, [officialLanguageCodesByIso]);
+
+  useEffect(() => {
+    onMatchingIso2sChangeRef.current = onMatchingIso2sChange;
+  }, [onMatchingIso2sChange]);
 
   const refreshMapPaint = useCallback(() => {
     const m = map.current;
@@ -439,6 +447,12 @@ export default function VisaMap({
       const sk = seasonKeyByIsoRef.current.get(iso2) ?? "";
       return passesComposite(iso2, sk);
     };
+
+    const matchingIso2s = visaDataRef.current
+      .filter((v) => passesForNonSeasonLayers(v.iso2))
+      .map((v) => v.iso2);
+    matchingIso2s.sort((a, b) => a.localeCompare(b));
+    onMatchingIso2sChangeRef.current?.(matchingIso2s);
 
     if (!enabled) {
       m.setPaintProperty("countries-fill", "fill-opacity", 0);

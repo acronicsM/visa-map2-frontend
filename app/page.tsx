@@ -25,6 +25,8 @@ const ALL_VACATION_TYPES = new Set([
 
 interface CountryShortApi {
   iso2: string;
+  name_ru?: string | null;
+  flag_emoji?: string | null;
   official_language_codes?: string[] | null;
 }
 
@@ -59,6 +61,11 @@ export default function Home() {
   const [selectedDepartureCities, setSelectedDepartureCities] = useState<Set<string>>(
     () => new Set(),
   );
+  const [matchingIso2s, setMatchingIso2s] = useState<string[]>([]);
+  const [matchingListReady, setMatchingListReady] = useState(false);
+  const [countryMetaByIso, setCountryMetaByIso] = useState<
+    Map<string, { name_ru: string; flag_emoji?: string | null }>
+  >(() => new Map());
 
   const seasonMonthRef = useRef(seasonMonth);
 
@@ -70,6 +77,7 @@ export default function Home() {
         if (cancelled || !Array.isArray(data)) return;
         const codes = new Set<string>();
         const byIso = new Map<string, string[]>();
+        const meta = new Map<string, { name_ru: string; flag_emoji?: string | null }>();
         for (const row of data) {
           const iso = String(row.iso2 ?? "").trim().toUpperCase();
           if (!iso) continue;
@@ -78,12 +86,18 @@ export default function Home() {
             .filter(Boolean);
           byIso.set(iso, langs);
           for (const c of langs) codes.add(c);
+          const nameRu = String(row.name_ru ?? "").trim() || iso;
+          meta.set(iso, { name_ru: nameRu, flag_emoji: row.flag_emoji ?? null });
         }
         setOfficialLanguageCodesByIso(byIso);
+        setCountryMetaByIso(meta);
         setLanguageOptions([...codes].sort((a, b) => a.localeCompare(b)));
       })
       .catch(() => {
-        if (!cancelled) setLanguageOptions([]);
+        if (!cancelled) {
+          setLanguageOptions([]);
+          setCountryMetaByIso(new Map());
+        }
       });
     return () => {
       cancelled = true;
@@ -112,6 +126,11 @@ export default function Home() {
       })),
     [distinctSeasonKeys],
   );
+
+  const handleMatchingIso2sChange = useCallback((iso2s: string[]) => {
+    setMatchingIso2s(iso2s);
+    setMatchingListReady(true);
+  }, []);
 
   function handlePassportChange(iso2: string) {
     setPassport(iso2);
@@ -241,11 +260,16 @@ export default function Home() {
             coloringEnabled={coloringEnabled}
             selectedLanguageCodes={selectedLanguageCodes}
             officialLanguageCodesByIso={officialLanguageCodesByIso}
+            onMatchingIso2sChange={handleMatchingIso2sChange}
           />
         </div>
       </section>
 
-      <TravelCollections />
+      <TravelCollections
+        matchingIso2s={matchingIso2s}
+        countryMetaByIso={countryMetaByIso}
+        listReady={matchingListReady}
+      />
       <ArticleSection />
       <Footer />
     </main>

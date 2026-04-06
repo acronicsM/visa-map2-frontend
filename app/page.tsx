@@ -9,9 +9,24 @@ import Footer from "./components/Footer";
 import type { MapColorMode } from "./types/map";
 import { getSeasonFilterRowPresentation } from "./lib/season-colors";
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
 const ALL_CATEGORIES = new Set(["free", "evisa", "voa", "embassy", "unavailable"]);
 const ALL_SAFETY_LEVELS = new Set(["safe", "unsafe", "dangerous"]);
 const ALL_COST_LEVELS = new Set(["low", "medium", "high"]);
+const ALL_VACATION_TYPES = new Set([
+  "beach",
+  "mountain",
+  "nature",
+  "culture",
+  "food",
+  "exotic",
+]);
+
+interface CountryShortApi {
+  iso2: string;
+  official_language_codes?: string[] | null;
+}
 
 export default function Home() {
   const [passport, setPassport] = useState("RU");
@@ -31,7 +46,49 @@ export default function Home() {
   const [coloringEnabled, setColoringEnabled] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
+  const [languageOptions, setLanguageOptions] = useState<string[]>([]);
+  const [officialLanguageCodesByIso, setOfficialLanguageCodesByIso] = useState<
+    Map<string, string[]>
+  >(() => new Map());
+  const [selectedLanguageCodes, setSelectedLanguageCodes] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [activeVacationTypes, setActiveVacationTypes] = useState<Set<string>>(
+    () => new Set(ALL_VACATION_TYPES),
+  );
+  const [selectedDepartureCities, setSelectedDepartureCities] = useState<Set<string>>(
+    () => new Set(),
+  );
+
   const seasonMonthRef = useRef(seasonMonth);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch(`${API_URL}/countries`)
+      .then((r) => r.json())
+      .then((data: CountryShortApi[]) => {
+        if (cancelled || !Array.isArray(data)) return;
+        const codes = new Set<string>();
+        const byIso = new Map<string, string[]>();
+        for (const row of data) {
+          const iso = String(row.iso2 ?? "").trim().toUpperCase();
+          if (!iso) continue;
+          const langs = (row.official_language_codes ?? [])
+            .map((c) => String(c).trim().toLowerCase())
+            .filter(Boolean);
+          byIso.set(iso, langs);
+          for (const c of langs) codes.add(c);
+        }
+        setOfficialLanguageCodesByIso(byIso);
+        setLanguageOptions([...codes].sort((a, b) => a.localeCompare(b)));
+      })
+      .catch(() => {
+        if (!cancelled) setLanguageOptions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     seasonMonthRef.current = seasonMonth;
@@ -99,6 +156,33 @@ export default function Home() {
     });
   }
 
+  function handleToggleLanguageCode(code: string) {
+    setSelectedLanguageCodes((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code);
+      else next.add(code);
+      return next;
+    });
+  }
+
+  function handleToggleVacationType(key: string) {
+    setActiveVacationTypes((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function handleToggleDepartureCity(city: string) {
+    setSelectedDepartureCities((prev) => {
+      const next = new Set(prev);
+      if (next.has(city)) next.delete(city);
+      else next.add(city);
+      return next;
+    });
+  }
+
   return (
     <main className="w-full">
       <section className="w-full flex" style={{ height: "100vh" }}>
@@ -122,6 +206,13 @@ export default function Home() {
           onColoringEnabledChange={setColoringEnabled}
           isOpen={sidebarOpen}
           onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
+          languageOptions={languageOptions}
+          selectedLanguageCodes={selectedLanguageCodes}
+          onToggleLanguageCode={handleToggleLanguageCode}
+          activeVacationTypes={activeVacationTypes}
+          onToggleVacationType={handleToggleVacationType}
+          selectedDepartureCities={selectedDepartureCities}
+          onToggleDepartureCity={handleToggleDepartureCity}
         />
         {!sidebarOpen && (
           <button
@@ -148,6 +239,8 @@ export default function Home() {
             seasonDistinctKeys={distinctSeasonKeys}
             onSeasonDistinctKeysLoaded={onSeasonDistinctKeysLoaded}
             coloringEnabled={coloringEnabled}
+            selectedLanguageCodes={selectedLanguageCodes}
+            officialLanguageCodesByIso={officialLanguageCodesByIso}
           />
         </div>
       </section>

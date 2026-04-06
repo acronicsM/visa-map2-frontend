@@ -91,6 +91,10 @@ interface VisaMapProps {
   seasonDistinctKeys: string[];
   onSeasonDistinctKeysLoaded?: (month: number, keys: string[]) => void;
   coloringEnabled: boolean;
+  /** Коды языков для фильтра (нижний регистр); пусто — язык не ограничивает */
+  selectedLanguageCodes: Set<string>;
+  /** iso2 (верхний регистр) → коды языков страны */
+  officialLanguageCodesByIso: Map<string, string[]>;
 }
 
 function normAttr(raw: string | null | undefined): string {
@@ -230,6 +234,34 @@ function applyAttributeColorsWithCompositeFilters(
   mapInstance.setPaintProperty("countries-fill", "fill-opacity", opacityExpression);
 }
 
+const LANGUAGE_PASS_COLOR = "#22c55e";
+
+function applyLanguageBinaryColors(
+  mapInstance: maplibregl.Map,
+  countryAttrs: Map<string, CountryAttrs>,
+  passes: (iso2: string) => boolean,
+  enabled: boolean,
+) {
+  if (!enabled) {
+    mapInstance.setPaintProperty("countries-fill", "fill-opacity", 0);
+    return;
+  }
+
+  const colorExpression: unknown[] = ["match", ["get", "iso2"]];
+  const opacityExpression: unknown[] = ["match", ["get", "iso2"]];
+
+  for (const [iso2] of countryAttrs) {
+    const ok = passes(iso2);
+    colorExpression.push(iso2, ok ? LANGUAGE_PASS_COLOR : NEUTRAL_COUNTRIES_COLOR);
+    opacityExpression.push(iso2, ok ? HIGH_FILL_OPACITY : DIM_FILL_OPACITY);
+  }
+  colorExpression.push(NEUTRAL_COUNTRIES_COLOR);
+  opacityExpression.push(DIM_FILL_OPACITY);
+
+  mapInstance.setPaintProperty("countries-fill", "fill-color", colorExpression);
+  mapInstance.setPaintProperty("countries-fill", "fill-opacity", opacityExpression);
+}
+
 function setSeasonLayerVisibility(mapInstance: maplibregl.Map, visible: boolean) {
   if (!mapInstance.getLayer(SEASONS_LAYER_ID)) return;
   mapInstance.setLayoutProperty(
@@ -273,6 +305,8 @@ export default function VisaMap({
   seasonDistinctKeys,
   onSeasonDistinctKeysLoaded,
   coloringEnabled,
+  selectedLanguageCodes,
+  officialLanguageCodesByIso,
 }: VisaMapProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
@@ -301,6 +335,8 @@ export default function VisaMap({
   const enrichedSeasonBaseMonthRef = useRef<number | null>(null);
   const onSeasonDistinctKeysLoadedRef = useRef(onSeasonDistinctKeysLoaded);
   const runSeasonGeodataFetchRef = useRef<() => void>(() => {});
+  const selectedLanguageCodesRef = useRef(selectedLanguageCodes);
+  const officialLanguageCodesByIsoRef = useRef(officialLanguageCodesByIso);
 
   const [popupCountry, setPopupCountry] = useState<CountryInfo | null>(null);
   const [popupVisa, setPopupVisa] = useState<VisaDetail | null>(null);
@@ -342,6 +378,14 @@ export default function VisaMap({
     onSeasonDistinctKeysLoadedRef.current = onSeasonDistinctKeysLoaded;
   }, [onSeasonDistinctKeysLoaded]);
 
+  useEffect(() => {
+    selectedLanguageCodesRef.current = selectedLanguageCodes;
+  }, [selectedLanguageCodes]);
+
+  useEffect(() => {
+    officialLanguageCodesByIsoRef.current = officialLanguageCodesByIso;
+  }, [officialLanguageCodesByIso]);
+
   const refreshMapPaint = useCallback(() => {
     const m = map.current;
     if (!m || !mapLoadedRef.current) return;
@@ -356,17 +400,35 @@ export default function VisaMap({
       }
       const attrs = countryAttrsRef.current.get(iso2);
       const safety = normAttr(attrs?.safety_level);
-      if (!safety || !activeSafetyLevelsRef.current.has(safety)) {
+      // Если у страны нет уровня безопасности в данных — не блокируем визовую раскраску
+      if (safety && !activeSafetyLevelsRef.current.has(safety)) {
         return false;
       }
       const cost = normAttr(attrs?.cost_level);
-      if (!cost || !activeCostLevelsRef.current.has(cost)) {
+      if (cost && !activeCostLevelsRef.current.has(cost)) {
         return false;
+      }
+      const selLang = selectedLanguageCodesRef.current;
+      if (selLang.size > 0) {
+        const codes = officialLanguageCodesByIsoRef.current.get(iso2) ?? [];
+        const have = new Set(codes.map((c) => String(c).trim().toLowerCase()));
+        let langHit = false;
+        for (const s of selLang) {
+          if (have.has(String(s).trim().toLowerCase())) {
+            langHit = true;
+            break;
+          }
+        }
+        if (!langHit) {
+          return false;
+        }
       }
       const distinctSeason = seasonDistinctKeysRef.current;
       if (distinctSeason.length > 0) {
         const sk = normalizeSeasonKey(seasonKeyForFilter);
-        if (!activeSeasonTypesRef.current.has(sk)) {
+        // Нет сезона в слое сезонов / нет данных — не блокируем (иначе не красятся
+        // страны вне сезонного GeoJSON, напр. отдельные территории).
+        if (sk && !activeSeasonTypesRef.current.has(sk)) {
           return false;
         }
       }
@@ -446,6 +508,16 @@ export default function VisaMap({
         "cost_level",
         COST_COLORS,
         activeCostLevelsRef.current,
+        countryAttrsRef.current,
+        passesForNonSeasonLayers,
+        true,
+      );
+      return;
+    }
+
+    if (mode === "language") {
+      applyLanguageBinaryColors(
+        m,
         countryAttrsRef.current,
         passesForNonSeasonLayers,
         true,
@@ -583,6 +655,8 @@ export default function VisaMap({
     activeSeasonTypes,
     seasonDistinctKeys,
     seasonMonth,
+    selectedLanguageCodes,
+    officialLanguageCodesByIso,
   ]);
 
   useEffect(() => {

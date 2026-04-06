@@ -2,6 +2,8 @@
 
 import { Fragment, useRef, useState } from "react";
 import PassportSelect from "./PassportSelect";
+import LanguageMultiSelect from "./language-multi-select";
+import DepartureCityMultiSelect from "./departure-city-multi-select";
 import type { MapColorMode } from "../types/map";
 
 const VISA_CATEGORIES: { key: string; label: string; color: string }[] = [
@@ -24,18 +26,37 @@ const COST_LEVELS: { key: string; label: string; color: string }[] = [
   { key: "high", label: "Дорого", color: "#ef4444" },
 ];
 
+const VACATION_TYPES: { key: string; label: string; color: string }[] = [
+  { key: "beach", label: "Пляжный", color: "#22c55e" },
+  { key: "mountain", label: "Горный", color: "#3b82f6" },
+  { key: "nature", label: "Природа", color: "#eab308" },
+  { key: "culture", label: "Культура", color: "#a855f7" },
+  { key: "food", label: "Еда", color: "#f97316" },
+  { key: "exotic", label: "Экзотика", color: "#ec4899" },
+];
+
+/** Заглушка: города вылета до появления API */
+export const STUB_DEPARTURE_CITIES = [
+  "Москва",
+  "Санкт-Петербург",
+  "Екатеринбург",
+  "Новосибирск",
+  "Казань",
+];
+
 const FILTER_GROUPS = [
   { key: "citizenship" as const, label: "Гражданство" },
   { key: "safety" as const, label: "Безопасность" },
   { key: "budget" as const, label: "Стоимость отдыха" },
   { key: "season" as const, label: "Сезонность" },
-  { key: "flight" as const, label: "Прямой рейс" },
-  { key: "distance" as const, label: "Дальность перелёта" },
+  { key: "language" as const, label: "Язык" },
+  { key: "vacation" as const, label: "Тип отдыха" },
+  { key: "flight" as const, label: "Прямой отдых" },
 ];
 
 type FilterGroupKey = (typeof FILTER_GROUPS)[number]["key"];
 
-const STUB_KEYS = new Set<FilterGroupKey>(["flight", "distance"]);
+const STUB_KEYS = new Set<FilterGroupKey>(["vacation", "flight"]);
 
 const MONTH_OPTIONS: { value: number; label: string }[] = [
   { value: 1, label: "Январь" },
@@ -149,6 +170,13 @@ interface FilterSidebarProps {
   onColoringEnabledChange: (enabled: boolean) => void;
   isOpen: boolean;
   onToggleSidebar: () => void;
+  languageOptions: string[];
+  selectedLanguageCodes: Set<string>;
+  onToggleLanguageCode: (code: string) => void;
+  activeVacationTypes: Set<string>;
+  onToggleVacationType: (key: string) => void;
+  selectedDepartureCities: Set<string>;
+  onToggleDepartureCity: (city: string) => void;
 }
 
 function Toggle({ checked, onChange }: { checked: boolean; onChange: () => void }) {
@@ -223,6 +251,13 @@ export default function FilterSidebar({
   onColoringEnabledChange,
   isOpen,
   onToggleSidebar,
+  languageOptions,
+  selectedLanguageCodes,
+  onToggleLanguageCode,
+  activeVacationTypes,
+  onToggleVacationType,
+  selectedDepartureCities,
+  onToggleDepartureCity,
 }: FilterSidebarProps) {
   const [openSections, setOpenSections] = useState<Set<FilterGroupKey>>(
     () => new Set(["citizenship"]),
@@ -446,8 +481,62 @@ export default function FilterSidebar({
                     </div>
                   )}
 
-                  {isSectionOpen && STUB_KEYS.has(key) && (
-                    <div className="px-3 pb-4">
+                  {isSectionOpen && key === "language" && (
+                    <div className="px-3 pb-4 flex flex-col gap-2">
+                      <span className="text-[13px]" style={{ color: "#9ca3af" }}>
+                        Языки (коды из данных бэкенда)
+                      </span>
+                      {languageOptions.length === 0 ? (
+                        <p className="text-[13px] leading-snug" style={{ color: "#9ca3af" }}>
+                          Загрузка списка языков…
+                        </p>
+                      ) : (
+                        <LanguageMultiSelect
+                          languageOptions={languageOptions}
+                          selected={selectedLanguageCodes}
+                          onToggle={onToggleLanguageCode}
+                          bgColor="#edeae3"
+                        />
+                      )}
+                      <p className="text-[12px] leading-snug" style={{ color: "#9ca3af" }}>
+                        На карте: зелёный — страна проходит фильтры; серый — нет. Раскраска по языку —
+                        без отдельных цветов категорий.
+                      </p>
+                    </div>
+                  )}
+
+                  {isSectionOpen && key === "vacation" && (
+                    <div className="px-3 pb-4 flex flex-col gap-1 mx-[2px]">
+                      {VACATION_TYPES.map(({ key: vk, label: vLabel, color }) => (
+                        <div key={vk} className="flex items-center justify-between">
+                          <div className="flex items-center gap-0.5">
+                            <span
+                              className="w-3.5 h-3.5 rounded-full shrink-0"
+                              style={{ backgroundColor: color }}
+                            />
+                            <span className="text-[14px]" style={{ color: "#374151" }}>
+                              {vLabel}
+                            </span>
+                          </div>
+                          <Toggle
+                            checked={activeVacationTypes.has(vk)}
+                            onChange={() => onToggleVacationType(vk)}
+                          />
+                        </div>
+                      ))}
+                      <p className="text-[12px] mt-2 leading-snug" style={{ color: "#9ca3af" }}>
+                        Заглушка: на карту пока не влияет.
+                      </p>
+                    </div>
+                  )}
+
+                  {isSectionOpen && key === "flight" && (
+                    <div className="px-3 pb-4 flex flex-col gap-3">
+                      <DepartureCityMultiSelect
+                        cityOptions={STUB_DEPARTURE_CITIES}
+                        selected={selectedDepartureCities}
+                        onToggle={onToggleDepartureCity}
+                      />
                       <span className="text-[13px]" style={{ color: "#9ca3af" }}>
                         Скоро будет доступно
                       </span>

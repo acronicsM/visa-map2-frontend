@@ -20,10 +20,10 @@ const SAFETY_LEVELS: { key: string; label: string; color: string }[] = [
   { key: "dangerous", label: "Опасно", color: "#ef4444" },
 ];
 
-const COST_LEVELS: { key: string; label: string; color: string }[] = [
-  { key: "low", label: "Недорого", color: "#22c55e" },
-  { key: "medium", label: "Средний уровень", color: "#eab308" },
-  { key: "high", label: "Дорого", color: "#ef4444" },
+const BUDGET_TIERS: { key: string; label: string; color: string }[] = [
+  { key: "cheap", label: "Эконом", color: "#22c55e" },
+  { key: "normal", label: "Средний", color: "#eab308" },
+  { key: "expensive", label: "Премиум", color: "#ef4444" },
 ];
 
 const VACATION_TYPES: { key: string; label: string; color: string }[] = [
@@ -157,8 +157,8 @@ interface FilterSidebarProps {
   onToggleCategory: (key: string) => void;
   activeSafetyLevels: Set<string>;
   onToggleSafetyLevel: (key: string) => void;
-  activeCostLevels: Set<string>;
-  onToggleCostLevel: (key: string) => void;
+  budgetTier: string | null;
+  onBudgetTierChange: (tier: string | null) => void;
   mapColorMode: MapColorMode;
   onMapColorModeChange: (mode: MapColorMode) => void;
   seasonMonth: number;
@@ -238,8 +238,8 @@ export default function FilterSidebar({
   onToggleCategory,
   activeSafetyLevels,
   onToggleSafetyLevel,
-  activeCostLevels,
-  onToggleCostLevel,
+  budgetTier,
+  onBudgetTierChange,
   mapColorMode,
   onMapColorModeChange,
   seasonMonth,
@@ -414,20 +414,24 @@ export default function FilterSidebar({
 
                   {isSectionOpen && key === "budget" && (
                     <div className="px-3 pb-4 flex flex-col gap-1 mx-[2px]">
-                      {COST_LEVELS.map(({ key: levKey, label: levLabel, color }) => (
-                        <div key={levKey} className="flex items-center justify-between">
+                      {BUDGET_TIERS.map(({ key: bKey, label: bLabel, color }) => (
+                        <div key={bKey} className="flex items-center justify-between">
                           <div className="flex items-center gap-0.5">
                             <span
                               className="w-3.5 h-3.5 rounded-full shrink-0"
                               style={{ backgroundColor: color }}
                             />
                             <span className="text-[14px]" style={{ color: "#374151" }}>
-                              {levLabel}
+                              {bLabel}
                             </span>
                           </div>
                           <Toggle
-                            checked={activeCostLevels.has(levKey)}
-                            onChange={() => onToggleCostLevel(levKey)}
+                            checked={budgetTier === bKey}
+                            onChange={() =>
+                              onBudgetTierChange(
+                                budgetTier === bKey ? null : bKey,
+                              )
+                            }
                           />
                         </div>
                       ))}

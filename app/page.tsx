@@ -7,13 +7,13 @@ import TravelCollections from "./components/TravelCollections";
 import ArticleSection from "./components/ArticleSection";
 import Footer from "./components/Footer";
 import type { MapColorMode } from "./types/map";
+import type { TravelCostScoreBands } from "./lib/travel-cost-score-bands";
 import { getSeasonFilterRowPresentation } from "./lib/season-colors";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 const ALL_CATEGORIES = new Set(["free", "evisa", "voa", "embassy", "unavailable"]);
 const ALL_SAFETY_LEVELS = new Set(["safe", "unsafe", "dangerous"]);
-const ALL_COST_LEVELS = new Set(["low", "medium", "high"]);
 const ALL_VACATION_TYPES = new Set([
   "beach",
   "mountain",
@@ -36,9 +36,7 @@ export default function Home() {
   const [activeSafetyLevels, setActiveSafetyLevels] = useState<Set<string>>(
     () => new Set(ALL_SAFETY_LEVELS),
   );
-  const [activeCostLevels, setActiveCostLevels] = useState<Set<string>>(
-    () => new Set(ALL_COST_LEVELS),
-  );
+  const [budgetTier, setBudgetTier] = useState<string | null>(null);
   const [mapColorMode, setMapColorMode] = useState<MapColorMode>("citizenship");
   const [seasonMonth, setSeasonMonth] = useState(() => new Date().getMonth() + 1);
   const [distinctSeasonKeys, setDistinctSeasonKeys] = useState<string[]>([]);
@@ -66,6 +64,9 @@ export default function Home() {
   const [countryMetaByIso, setCountryMetaByIso] = useState<
     Map<string, { name_ru: string; flag_emoji?: string | null }>
   >(() => new Map());
+  const [travelCostScores, setTravelCostScores] = useState<Record<string, number>>({});
+  const [travelCostScoreBands, setTravelCostScoreBands] =
+    useState<TravelCostScoreBands | null>(null);
 
   const seasonMonthRef = useRef(seasonMonth);
 
@@ -105,6 +106,34 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    void fetch(`${API_URL}/travel-costs/score-bands`)
+      .then((r) => {
+        if (!r.ok) throw new Error(String(r.status));
+        return r.json();
+      })
+      .then((data: TravelCostScoreBands) => {
+        if (cancelled) return;
+        if (
+          data &&
+          Array.isArray(data.thresholds) &&
+          Array.isArray(data.labels) &&
+          Array.isArray(data.colors)
+        ) {
+          setTravelCostScoreBands(data);
+        } else {
+          setTravelCostScoreBands(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setTravelCostScoreBands(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     seasonMonthRef.current = seasonMonth;
   }, [seasonMonth]);
 
@@ -136,6 +165,30 @@ export default function Home() {
     setPassport(iso2);
   }
 
+  // Load travel cost scores when passport or budget tier changes
+  useEffect(() => {
+    let cancelled = false;
+    if (!budgetTier) {
+      queueMicrotask(() => {
+        if (!cancelled) setTravelCostScores({});
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+    void fetch(`${API_URL}/travel-costs/${passport}?budget_tier=${budgetTier}`)
+      .then((r) => r.json())
+      .then((data: { scores: Record<string, number> }) => {
+        if (!cancelled) setTravelCostScores(data.scores ?? {});
+      })
+      .catch(() => {
+        if (!cancelled) setTravelCostScores({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [passport, budgetTier]);
+
   function handleToggleCategory(key: string) {
     setActiveCategories((prev) => {
       const next = new Set(prev);
@@ -157,13 +210,12 @@ export default function Home() {
     });
   }
 
-  function handleToggleCostLevel(key: string) {
-    setActiveCostLevels((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+  function handleBudgetTierChange(tier: string | null) {
+    setBudgetTier(tier);
+    if (tier) {
+      setMapColorMode("budget");
+      setColoringEnabled(true);
+    }
   }
 
   function handleToggleSeasonType(key: string) {
@@ -212,8 +264,8 @@ export default function Home() {
           onToggleCategory={handleToggleCategory}
           activeSafetyLevels={activeSafetyLevels}
           onToggleSafetyLevel={handleToggleSafetyLevel}
-          activeCostLevels={activeCostLevels}
-          onToggleCostLevel={handleToggleCostLevel}
+          budgetTier={budgetTier}
+          onBudgetTierChange={handleBudgetTierChange}
           mapColorMode={mapColorMode}
           onMapColorModeChange={setMapColorMode}
           seasonMonth={seasonMonth}
@@ -253,7 +305,7 @@ export default function Home() {
             mapColorMode={mapColorMode}
             seasonMonth={seasonMonth}
             activeSafetyLevels={activeSafetyLevels}
-            activeCostLevels={activeCostLevels}
+            budgetTier={budgetTier}
             activeSeasonTypes={activeSeasonTypes}
             seasonDistinctKeys={distinctSeasonKeys}
             onSeasonDistinctKeysLoaded={onSeasonDistinctKeysLoaded}
@@ -261,6 +313,8 @@ export default function Home() {
             selectedLanguageCodes={selectedLanguageCodes}
             officialLanguageCodesByIso={officialLanguageCodesByIso}
             onMatchingIso2sChange={handleMatchingIso2sChange}
+            travelCostScores={travelCostScores}
+            travelCostScoreBands={travelCostScoreBands}
           />
         </div>
       </section>

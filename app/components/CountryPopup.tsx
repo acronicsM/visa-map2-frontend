@@ -1,5 +1,11 @@
 "use client";
 
+import {
+  DEFAULT_TRAVEL_COST_SCORE_BANDS,
+  travelCostLabelForScore,
+  type TravelCostScoreBands,
+} from "../lib/travel-cost-score-bands";
+
 interface VisaItem {
   id: string;
   iso2: string;
@@ -17,8 +23,7 @@ interface Country {
   subregion: string;
   capital: string;
   safety_level?: string | null;
-  cost_level?: string | null;
-  cost_per_day_usd?: number | null;
+  cost_score?: number | null;
 }
 
 interface Props {
@@ -26,6 +31,7 @@ interface Props {
   visa: VisaItem | null;
   x: number;
   y: number;
+  costScoreBands?: TravelCostScoreBands | null;
 }
 
 const VISA_LABELS: Record<string, string> = {
@@ -54,41 +60,36 @@ const SAFETY_LABELS: Record<string, string> = {
   dangerous: "Безопасность: высокий риск",
 };
 
-const COST_LABELS: Record<string, string> = {
-  low: "Отдых: недорого",
-  medium: "Отдых: средний бюджет",
-  high: "Отдых: дорого",
-};
-
 function safetyLabel(level: string | null | undefined): string | null {
   if (!level) return null;
   return SAFETY_LABELS[level] ?? `Безопасность: ${level}`;
 }
 
 function costLabel(
-  level: string | null | undefined,
-  usd: number | null | undefined,
+  score: number | null | undefined,
+  bands: TravelCostScoreBands,
 ): string | null {
-  const parts: string[] = [];
-  if (level) {
-    parts.push(COST_LABELS[level] ?? `Стоимость: ${level}`);
-  }
-  if (usd != null && usd > 0) {
-    parts.push(`~$${usd}/день`);
-  }
-  if (parts.length === 0) return null;
-  return parts.join(" · ");
+  if (score == null) return null;
+  const text = travelCostLabelForScore(score, bands);
+  return text || null;
 }
 
-export default function CountryPopup({ country, visa, x, y }: Props) {
+export default function CountryPopup({
+  country,
+  visa,
+  x,
+  y,
+  costScoreBands,
+}: Props) {
   if (!country) return null;
 
   const category = visa?.visa_category ?? "unknown";
   const color = VISA_COLORS[category];
   const label = VISA_LABELS[category];
 
+  const bands = costScoreBands ?? DEFAULT_TRAVEL_COST_SCORE_BANDS;
   const safetyText = safetyLabel(country.safety_level);
-  const costText = costLabel(country.cost_level, country.cost_per_day_usd);
+  const costText = costLabel(country.cost_score, bands);
 
   const offsetX = 16;
   const offsetY = 16;

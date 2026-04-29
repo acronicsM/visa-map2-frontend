@@ -6,3 +6,5 @@ export type MapColorMode =
   | "language"
   | "vacation"
   | "flight";
+
+export type BudgetTier = "cheap" | "normal" | "expensive";

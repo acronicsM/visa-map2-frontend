@@ -1,328 +1,96 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import VisaMap from "./components/VisaMap";
 import FilterSidebar from "./components/FilterSidebar";
+import PassportCountrySearch from "./components/passport-country-search";
 import TravelCollections from "./components/TravelCollections";
 import ArticleSection from "./components/ArticleSection";
 import Footer from "./components/Footer";
-import type { MapColorMode } from "./types/map";
-import type { TravelCostScoreBands } from "./lib/travel-cost-score-bands";
-import { getSeasonFilterRowPresentation } from "./lib/season-colors";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-const ALL_CATEGORIES = new Set(["free", "evisa", "voa", "embassy", "unavailable"]);
-const ALL_SAFETY_LEVELS = new Set(["safe", "unsafe", "dangerous"]);
-const ALL_VACATION_TYPES = new Set([
-  "beach",
-  "mountain",
-  "nature",
-  "culture",
-  "food",
-  "exotic",
-]);
-
-interface CountryShortApi {
-  iso2: string;
-  name_ru?: string | null;
-  flag_emoji?: string | null;
-  official_language_codes?: string[] | null;
-}
+import { useHomeMapState } from "./hooks/use-home-map-state";
 
 export default function Home() {
-  const [passport, setPassport] = useState("RU");
-  const [activeCategories, setActiveCategories] = useState<Set<string>>(new Set(ALL_CATEGORIES));
-  const [activeSafetyLevels, setActiveSafetyLevels] = useState<Set<string>>(
-    () => new Set(ALL_SAFETY_LEVELS),
-  );
-  const [budgetTier, setBudgetTier] = useState<string | null>(null);
-  const [mapColorMode, setMapColorMode] = useState<MapColorMode>("citizenship");
-  const [seasonMonth, setSeasonMonth] = useState(() => new Date().getMonth() + 1);
-  const [distinctSeasonKeys, setDistinctSeasonKeys] = useState<string[]>([]);
-  const [activeSeasonTypes, setActiveSeasonTypes] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const [coloringEnabled, setColoringEnabled] = useState(true);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-
-  const [languageOptions, setLanguageOptions] = useState<string[]>([]);
-  const [officialLanguageCodesByIso, setOfficialLanguageCodesByIso] = useState<
-    Map<string, string[]>
-  >(() => new Map());
-  const [selectedLanguageCodes, setSelectedLanguageCodes] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const [activeVacationTypes, setActiveVacationTypes] = useState<Set<string>>(
-    () => new Set(ALL_VACATION_TYPES),
-  );
-  const [selectedDepartureCities, setSelectedDepartureCities] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const [matchingIso2s, setMatchingIso2s] = useState<string[]>([]);
-  const [matchingListReady, setMatchingListReady] = useState(false);
-  const [countryMetaByIso, setCountryMetaByIso] = useState<
-    Map<string, { name_ru: string; flag_emoji?: string | null }>
-  >(() => new Map());
-  const [travelCostScores, setTravelCostScores] = useState<Record<string, number>>({});
-  const [travelCostScoreBands, setTravelCostScoreBands] =
-    useState<TravelCostScoreBands | null>(null);
-
-  const seasonMonthRef = useRef(seasonMonth);
-
-  useEffect(() => {
-    let cancelled = false;
-    void fetch(`${API_URL}/countries`)
-      .then((r) => r.json())
-      .then((data: CountryShortApi[]) => {
-        if (cancelled || !Array.isArray(data)) return;
-        const codes = new Set<string>();
-        const byIso = new Map<string, string[]>();
-        const meta = new Map<string, { name_ru: string; flag_emoji?: string | null }>();
-        for (const row of data) {
-          const iso = String(row.iso2 ?? "").trim().toUpperCase();
-          if (!iso) continue;
-          const langs = (row.official_language_codes ?? [])
-            .map((c) => String(c).trim().toLowerCase())
-            .filter(Boolean);
-          byIso.set(iso, langs);
-          for (const c of langs) codes.add(c);
-          const nameRu = String(row.name_ru ?? "").trim() || iso;
-          meta.set(iso, { name_ru: nameRu, flag_emoji: row.flag_emoji ?? null });
-        }
-        setOfficialLanguageCodesByIso(byIso);
-        setCountryMetaByIso(meta);
-        setLanguageOptions([...codes].sort((a, b) => a.localeCompare(b)));
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setLanguageOptions([]);
-          setCountryMetaByIso(new Map());
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    void fetch(`${API_URL}/travel-costs/score-bands`)
-      .then((r) => {
-        if (!r.ok) throw new Error(String(r.status));
-        return r.json();
-      })
-      .then((data: TravelCostScoreBands) => {
-        if (cancelled) return;
-        if (
-          data &&
-          Array.isArray(data.thresholds) &&
-          Array.isArray(data.labels) &&
-          Array.isArray(data.colors)
-        ) {
-          setTravelCostScoreBands(data);
-        } else {
-          setTravelCostScoreBands(null);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setTravelCostScoreBands(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    seasonMonthRef.current = seasonMonth;
-  }, [seasonMonth]);
-
-  const handleSeasonMonthChange = useCallback((month: number) => {
-    setSeasonMonth(month);
-  }, []);
-
-  const onSeasonDistinctKeysLoaded = useCallback((loadedMonth: number, keys: string[]) => {
-    if (loadedMonth !== seasonMonthRef.current) return;
-    setDistinctSeasonKeys(keys);
-    setActiveSeasonTypes(new Set(keys));
-  }, []);
-
-  const seasonFilterRows = useMemo(
-    () =>
-      distinctSeasonKeys.map((k) => ({
-        key: k,
-        ...getSeasonFilterRowPresentation(k),
-      })),
-    [distinctSeasonKeys],
-  );
-
-  const handleMatchingIso2sChange = useCallback((iso2s: string[]) => {
-    setMatchingIso2s(iso2s);
-    setMatchingListReady(true);
-  }, []);
-
-  function handlePassportChange(iso2: string) {
-    setPassport(iso2);
-  }
-
-  // Load travel cost scores when passport or budget tier changes
-  useEffect(() => {
-    let cancelled = false;
-    if (!budgetTier) {
-      queueMicrotask(() => {
-        if (!cancelled) setTravelCostScores({});
-      });
-      return () => {
-        cancelled = true;
-      };
-    }
-    void fetch(`${API_URL}/travel-costs/${passport}?budget_tier=${budgetTier}`)
-      .then((r) => r.json())
-      .then((data: { scores: Record<string, number> }) => {
-        if (!cancelled) setTravelCostScores(data.scores ?? {});
-      })
-      .catch(() => {
-        if (!cancelled) setTravelCostScores({});
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [passport, budgetTier]);
-
-  function handleToggleCategory(key: string) {
-    setActiveCategories((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) {
-        next.delete(key);
-      } else {
-        next.add(key);
-      }
-      return next;
-    });
-  }
-
-  function handleToggleSafetyLevel(key: string) {
-    setActiveSafetyLevels((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }
-
-  function handleBudgetTierChange(tier: string | null) {
-    setBudgetTier(tier);
-    if (tier) {
-      setMapColorMode("budget");
-      setColoringEnabled(true);
-    }
-  }
-
-  function handleToggleSeasonType(key: string) {
-    setActiveSeasonTypes((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }
-
-  function handleToggleLanguageCode(code: string) {
-    setSelectedLanguageCodes((prev) => {
-      const next = new Set(prev);
-      if (next.has(code)) next.delete(code);
-      else next.add(code);
-      return next;
-    });
-  }
-
-  function handleToggleVacationType(key: string) {
-    setActiveVacationTypes((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }
-
-  function handleToggleDepartureCity(city: string) {
-    setSelectedDepartureCities((prev) => {
-      const next = new Set(prev);
-      if (next.has(city)) next.delete(city);
-      else next.add(city);
-      return next;
-    });
-  }
+  const s = useHomeMapState();
 
   return (
-    <main className="w-full">
-      <section className="w-full flex" style={{ height: "100vh" }}>
+    <main className="flex w-full min-h-0 flex-1 flex-col">
+      <section
+        className="flex w-full min-h-0"
+        style={{ height: "calc(100svh - var(--site-header-height))" }}
+      >
         <FilterSidebar
-          passport={passport}
-          onPassportChange={handlePassportChange}
-          activeCategories={activeCategories}
-          onToggleCategory={handleToggleCategory}
-          activeSafetyLevels={activeSafetyLevels}
-          onToggleSafetyLevel={handleToggleSafetyLevel}
-          budgetTier={budgetTier}
-          onBudgetTierChange={handleBudgetTierChange}
-          mapColorMode={mapColorMode}
-          onMapColorModeChange={setMapColorMode}
-          seasonMonth={seasonMonth}
-          onSeasonMonthChange={handleSeasonMonthChange}
-          activeSeasonTypes={activeSeasonTypes}
-          onToggleSeasonType={handleToggleSeasonType}
-          seasonFilterRows={seasonFilterRows}
-          coloringEnabled={coloringEnabled}
-          onColoringEnabledChange={setColoringEnabled}
-          isOpen={sidebarOpen}
-          onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
-          languageOptions={languageOptions}
-          selectedLanguageCodes={selectedLanguageCodes}
-          onToggleLanguageCode={handleToggleLanguageCode}
-          activeVacationTypes={activeVacationTypes}
-          onToggleVacationType={handleToggleVacationType}
-          selectedDepartureCities={selectedDepartureCities}
-          onToggleDepartureCity={handleToggleDepartureCity}
+          passport={s.passport}
+          onPassportChange={s.handlePassportChange}
+          hidePassportInPanel
+          activeCategories={s.activeCategories}
+          onToggleCategory={s.handleToggleCategory}
+          activeSafetyLevels={s.activeSafetyLevels}
+          onToggleSafetyLevel={s.handleToggleSafetyLevel}
+          budgetTier={s.budgetTier}
+          onBudgetTierChange={s.handleBudgetTierChange}
+          mapColorMode={s.mapColorMode}
+          onMapColorModeChange={s.setMapColorMode}
+          seasonMonth={s.seasonMonth}
+          onSeasonMonthChange={s.handleSeasonMonthChange}
+          activeSeasonTypes={s.activeSeasonTypes}
+          onToggleSeasonType={s.handleToggleSeasonType}
+          seasonFilterRows={s.seasonFilterRows}
+          coloringEnabled={s.coloringEnabled}
+          onColoringEnabledChange={s.setColoringEnabled}
+          isOpen={s.sidebarOpen}
+          onToggleSidebar={() => s.setSidebarOpen(!s.sidebarOpen)}
+          activeVacationTypes={s.activeVacationTypes}
+          onToggleVacationType={s.handleToggleVacationType}
+          selectedDepartureCities={s.selectedDepartureCities}
+          onToggleDepartureCity={s.handleToggleDepartureCity}
         />
-        {!sidebarOpen && (
+        {!s.sidebarOpen && (
           <button
-            onClick={() => setSidebarOpen(true)}
-            className="flex items-center justify-center w-8 h-full hover:opacity-70 transition-opacity shrink-0"
-            style={{ backgroundColor: "#edeae3" }}
+            type="button"
+            onClick={() => s.setSidebarOpen(true)}
+            className="flex h-full w-8 shrink-0 items-center justify-center bg-surface-container transition-opacity hover:opacity-70"
             title="Открыть фильтры"
           >
-            <svg className="w-4 h-4" style={{ color: "#9ca3af" }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg
+              className="h-4 w-4 text-outline"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5l7 7-7 7" />
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7" />
             </svg>
           </button>
         )}
-        <div className="flex-1 relative overflow-hidden">
+        <div className="relative flex-1 overflow-hidden">
           <VisaMap
-            passport={passport}
-            activeCategories={activeCategories}
-            mapColorMode={mapColorMode}
-            seasonMonth={seasonMonth}
-            activeSafetyLevels={activeSafetyLevels}
-            budgetTier={budgetTier}
-            activeSeasonTypes={activeSeasonTypes}
-            seasonDistinctKeys={distinctSeasonKeys}
-            onSeasonDistinctKeysLoaded={onSeasonDistinctKeysLoaded}
-            coloringEnabled={coloringEnabled}
-            selectedLanguageCodes={selectedLanguageCodes}
-            officialLanguageCodesByIso={officialLanguageCodesByIso}
-            onMatchingIso2sChange={handleMatchingIso2sChange}
-            travelCostScores={travelCostScores}
-            travelCostScoreBands={travelCostScoreBands}
+            passport={s.passport}
+            activeCategories={s.activeCategories}
+            mapColorMode={s.mapColorMode}
+            seasonMonth={s.seasonMonth}
+            activeSafetyLevels={s.activeSafetyLevels}
+            budgetTier={s.budgetTier}
+            activeSeasonTypes={s.activeSeasonTypes}
+            seasonDistinctKeys={s.distinctSeasonKeys}
+            onSeasonDistinctKeysLoaded={s.onSeasonDistinctKeysLoaded}
+            coloringEnabled={s.coloringEnabled}
+            onMatchingIso2sChange={s.handleMatchingIso2sChange}
+            travelCostScores={s.travelCostScores}
+            travelCostScoreBands={s.travelCostScoreBands}
           />
+          <div className="pointer-events-none absolute inset-x-0 top-3 z-40 flex justify-center px-3 sm:top-4">
+            <PassportCountrySearch
+              className="pointer-events-auto w-full max-w-md"
+              value={s.passport}
+              onChange={s.handlePassportChange}
+            />
+          </div>
         </div>
       </section>
 
       <TravelCollections
-        matchingIso2s={matchingIso2s}
-        countryMetaByIso={countryMetaByIso}
-        listReady={matchingListReady}
+        matchingIso2s={s.matchingIso2s}
+        countryMetaByIso={s.countryMetaByIso}
+        listReady={s.matchingListReady}
       />
       <ArticleSection />
       <Footer />

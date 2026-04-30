@@ -2,7 +2,6 @@
 
 import { Fragment, useRef, useState } from "react";
 import PassportSelect from "./PassportSelect";
-import LanguageMultiSelect from "./language-multi-select";
 import DepartureCityMultiSelect from "./departure-city-multi-select";
 import type { MapColorMode } from "../types/map";
 
@@ -49,9 +48,8 @@ const FILTER_GROUPS = [
   { key: "safety" as const, label: "Безопасность" },
   { key: "budget" as const, label: "Стоимость отдыха" },
   { key: "season" as const, label: "Сезонность" },
-  { key: "language" as const, label: "Язык" },
   { key: "vacation" as const, label: "Тип отдыха" },
-  { key: "flight" as const, label: "Прямой отдых" },
+  { key: "flight" as const, label: "Прямой перелет" },
 ];
 
 type FilterGroupKey = (typeof FILTER_GROUPS)[number]["key"];
@@ -116,7 +114,7 @@ function SeasonMonthRail({
         aria-label="Месяц для карты погоды"
         tabIndex={0}
         onKeyDown={handleKeyDown}
-        className="flex w-full items-stretch overflow-hidden rounded-md border border-[#ddd9d0] bg-white outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#edeae3]"
+        className="flex w-full items-stretch overflow-hidden rounded-md border border-outline-variant bg-white outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface-container"
       >
         <span className={sepClass} aria-hidden />
         {MONTH_OPTIONS.map((m) => {
@@ -132,8 +130,8 @@ function SeasonMonthRail({
                 onClick={() => selectMonth(m.value)}
                 className="min-h-9 min-w-0 flex-1 px-0.5 py-1 text-center text-[11px] font-medium tabular-nums leading-none transition-colors hover:bg-black/5 sm:text-xs"
                 style={{
-                  color: selected ? "#2563eb" : "#6b7280",
-                  backgroundColor: selected ? "rgba(59, 130, 246, 0.12)" : "transparent",
+                  color: selected ? "var(--color-primary)" : "var(--color-on-surface-variant)",
+                  backgroundColor: selected ? "color-mix(in srgb, var(--color-primary) 14%, transparent)" : "transparent",
                 }}
               >
                 {m.value}
@@ -143,7 +141,7 @@ function SeasonMonthRail({
           );
         })}
       </div>
-      <p className="text-center text-[14px]" style={{ color: "#374151" }} aria-live="polite">
+      <p className="text-center text-[14px] text-on-surface" aria-live="polite">
         {monthLabel}
       </p>
     </div>
@@ -170,13 +168,14 @@ interface FilterSidebarProps {
   onColoringEnabledChange: (enabled: boolean) => void;
   isOpen: boolean;
   onToggleSidebar: () => void;
-  languageOptions: string[];
-  selectedLanguageCodes: Set<string>;
-  onToggleLanguageCode: (code: string) => void;
   activeVacationTypes: Set<string>;
   onToggleVacationType: (key: string) => void;
   selectedDepartureCities: Set<string>;
   onToggleDepartureCity: (city: string) => void;
+  /** Панель в оверлее превью: на всю ширину, без анимации сворачивания в 0px */
+  layout?: "default" | "drawerEmbed";
+  /** Паспорт выбран снаружи панели — скрыть блок «Ваш паспорт» */
+  hidePassportInPanel?: boolean;
 }
 
 function Toggle({ checked, onChange }: { checked: boolean; onChange: () => void }) {
@@ -193,8 +192,7 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: () => void 
 function ChevronIcon({ open, className }: { open: boolean; className?: string }) {
   return (
     <svg
-      className={`w-4 h-4 transition-transform duration-200 ${open ? "rotate-180" : ""} ${className ?? ""}`}
-      style={{ color: "#9ca3af" }}
+      className={`w-4 h-4 text-outline transition-transform duration-200 ${open ? "rotate-180" : ""} ${className ?? ""}`}
       fill="none"
       viewBox="0 0 24 24"
       stroke="currentColor"
@@ -218,12 +216,16 @@ function ColorBadge({
       className="flex items-center gap-1.5 px-1.5 py-0.5 rounded hover:bg-black/5 transition-colors"
     >
       <span
-        className="w-2.5 h-2.5 rounded-full transition-colors duration-200"
-        style={{ backgroundColor: active ? "#3b82f6" : "#d1d5db" }}
+        className="h-2.5 w-2.5 rounded-full transition-colors duration-200"
+        style={{
+          backgroundColor: active ? "var(--color-primary)" : "var(--color-outline-variant)",
+        }}
       />
       <span
         className="text-xs transition-colors duration-200"
-        style={{ color: active ? "#3b82f6" : "#9ca3af" }}
+        style={{
+          color: active ? "var(--color-primary)" : "var(--color-outline)",
+        }}
       >
         цвет
       </span>
@@ -251,14 +253,14 @@ export default function FilterSidebar({
   onColoringEnabledChange,
   isOpen,
   onToggleSidebar,
-  languageOptions,
-  selectedLanguageCodes,
-  onToggleLanguageCode,
   activeVacationTypes,
   onToggleVacationType,
   selectedDepartureCities,
   onToggleDepartureCity,
+  layout: layoutProp = "default",
+  hidePassportInPanel = false,
 }: FilterSidebarProps) {
+  const isDrawerEmbed = layoutProp === "drawerEmbed";
   const [openSections, setOpenSections] = useState<Set<FilterGroupKey>>(
     () => new Set(["citizenship"]),
   );
@@ -287,36 +289,54 @@ export default function FilterSidebar({
 
   return (
     <div
-      className="relative flex flex-col transition-all duration-300 ease-in-out overflow-hidden"
-      style={{
-        width: isOpen ? "280px" : "0px",
-        minHeight: "100%",
-        backgroundColor: "#edeae3",
-        flexShrink: 0,
-      }}
+      className={
+        isDrawerEmbed
+          ? "relative flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden bg-surface-container"
+          : "relative flex flex-col overflow-hidden bg-surface-container transition-all duration-300 ease-in-out"
+      }
+      style={
+        isDrawerEmbed
+          ? {
+              minHeight: "100%",
+              flexShrink: 1,
+            }
+          : {
+              width: isOpen ? "280px" : "0px",
+              minHeight: "100%",
+              flexShrink: 0,
+            }
+      }
     >
-      {isOpen && (
-        <div className="flex flex-col h-full overflow-y-auto" style={{ minWidth: "280px" }}>
+      {(isOpen || isDrawerEmbed) && (
+        <div
+          className="flex h-full flex-col overflow-y-auto"
+          style={isDrawerEmbed ? { minWidth: 0, width: "100%" } : { minWidth: "280px" }}
+        >
 
-          <div className="flex items-center justify-between px-5 pt-5 pb-3">
-            <span
-              className="text-xs font-semibold tracking-widest"
-              style={{ color: "#a8a39a", letterSpacing: "0.12em" }}
-            >
-              ФИЛЬТРЫ
-            </span>
-            <button
-              onClick={onToggleSidebar}
-              className="w-6 h-6 flex items-center justify-center hover:opacity-60 transition-opacity"
-              title="Свернуть"
-              style={{ color: "#9ca3af" }}
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 19l-7-7 7-7" />
-              </svg>
-            </button>
-          </div>
+          {!isDrawerEmbed && (
+            <div className="flex items-center justify-between px-5 pt-5 pb-3">
+              <span
+                className="text-xs font-semibold tracking-widest text-outline"
+                style={{ letterSpacing: "0.12em" }}
+              >
+                ФИЛЬТРЫ
+              </span>
+              <button
+                type="button"
+                onClick={onToggleSidebar}
+                className="flex h-6 w-6 items-center justify-center text-outline transition-opacity hover:opacity-60"
+                title="Свернуть"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 19l-7-7 7-7" />
+                </svg>
+              </button>
+            </div>
+          )}
+
+
+
 
           <div className="flex flex-col mx-3">
             {FILTER_GROUPS.map(({ key, label }, idx) => {
@@ -327,8 +347,10 @@ export default function FilterSidebar({
                 <div
                   key={key}
                   style={{
-                    borderLeft: isColorActive ? "3px solid #3b82f6" : "3px solid transparent",
-                    borderTop: idx > 0 ? "1px solid #ddd9d0" : undefined,
+                    borderLeft: isColorActive
+                      ? "3px solid var(--color-primary)"
+                      : "3px solid transparent",
+                    borderTop: idx > 0 ? "1px solid var(--color-outline-variant)" : undefined,
                   }}
                 >
                   <div
@@ -340,7 +362,7 @@ export default function FilterSidebar({
                     }}
                     className="w-full flex items-center justify-between px-3 py-3 cursor-pointer hover:bg-black/3 transition-colors select-none rounded"
                   >
-                    <span className="text-[15px] font-medium" style={{ color: "#374151" }}>
+                    <span className="text-[15px] font-medium text-on-surface">
                       {label}
                     </span>
                     <div className="flex items-center gap-1.5">
@@ -354,21 +376,16 @@ export default function FilterSidebar({
 
                   {isSectionOpen && key === "citizenship" && (
                     <div>
-                      <div className="px-3 pb-3">
-                        <span
-                          className="block text-[13px] mb-2"
-                          style={{ color: "#9ca3af" }}
-                        >
-                          Ваш паспорт
-                        </span>
-                        <PassportSelect
-                          value={passport}
-                          onChange={onPassportChange}
-                          bgColor="#edeae3"
-                        />
-                      </div>
+                      {!hidePassportInPanel && (
+                        <div className="px-3 pb-3">
+                          <span className="mb-2 block text-[13px] text-outline">
+                            Ваш паспорт
+                          </span>
+                          <PassportSelect value={passport} onChange={onPassportChange} />
+                        </div>
+                      )}
 
-                      <div className="px-3 pb-4 flex flex-col gap-1 justify-end mx-[2px]">
+                      <div className="mx-[2px] flex flex-col justify-end gap-1 px-3 pb-4">
                         {VISA_CATEGORIES.map(({ key: catKey, label: catLabel, color }) => (
                           <div key={catKey} className="flex items-center justify-between">
                             <div className="flex items-center gap-0.5">
@@ -376,7 +393,7 @@ export default function FilterSidebar({
                                 className="w-3.5 h-3.5 rounded-full shrink-0"
                                 style={{ backgroundColor: color }}
                               />
-                              <span className="text-[14px]" style={{ color: "#374151" }}>
+                              <span className="text-[14px] text-on-surface">
                                 {catLabel}
                               </span>
                             </div>
@@ -399,7 +416,7 @@ export default function FilterSidebar({
                               className="w-3.5 h-3.5 rounded-full shrink-0"
                               style={{ backgroundColor: color }}
                             />
-                            <span className="text-[14px]" style={{ color: "#374151" }}>
+                            <span className="text-[14px] text-on-surface">
                               {levLabel}
                             </span>
                           </div>
@@ -421,7 +438,7 @@ export default function FilterSidebar({
                               className="w-3.5 h-3.5 rounded-full shrink-0"
                               style={{ backgroundColor: color }}
                             />
-                            <span className="text-[14px]" style={{ color: "#374151" }}>
+                            <span className="text-[14px] text-on-surface">
                               {bLabel}
                             </span>
                           </div>
@@ -450,7 +467,7 @@ export default function FilterSidebar({
                         }}
                       />
                       {seasonFilterRows.length === 0 ? (
-                        <p className="text-[13px] leading-snug" style={{ color: "#9ca3af" }}>
+                        <p className="text-[13px] leading-snug text-outline">
                           Список сезонов подставится из данных выбранного месяца после загрузки слоя
                           (включите «цвет» для «Сезонность»).
                         </p>
@@ -466,11 +483,7 @@ export default function FilterSidebar({
                                   className="w-3.5 h-3.5 rounded-full shrink-0"
                                   style={{ backgroundColor: color }}
                                 />
-                                <span
-                                  className="text-[14px] truncate"
-                                  style={{ color: "#374151" }}
-                                  title={rowLabel}
-                                >
+                                <span className="truncate text-[14px] text-on-surface" title={rowLabel}>
                                   {rowLabel}
                                 </span>
                               </div>
@@ -485,29 +498,6 @@ export default function FilterSidebar({
                     </div>
                   )}
 
-                  {isSectionOpen && key === "language" && (
-                    <div className="px-3 pb-4 flex flex-col gap-2">
-                      <span className="text-[13px]" style={{ color: "#9ca3af" }}>
-                        Языки (коды из данных бэкенда)
-                      </span>
-                      {languageOptions.length === 0 ? (
-                        <p className="text-[13px] leading-snug" style={{ color: "#9ca3af" }}>
-                          Загрузка списка языков…
-                        </p>
-                      ) : (
-                        <LanguageMultiSelect
-                          languageOptions={languageOptions}
-                          selected={selectedLanguageCodes}
-                          onToggle={onToggleLanguageCode}
-                          bgColor="#edeae3"
-                        />
-                      )}
-                      <p className="text-[12px] leading-snug" style={{ color: "#9ca3af" }}>
-                        На карте: зелёный — страна проходит фильтры; серый — нет. Раскраска по языку —
-                        без отдельных цветов категорий.
-                      </p>
-                    </div>
-                  )}
 
                   {isSectionOpen && key === "vacation" && (
                     <div className="px-3 pb-4 flex flex-col gap-1 mx-[2px]">
@@ -518,7 +508,7 @@ export default function FilterSidebar({
                               className="w-3.5 h-3.5 rounded-full shrink-0"
                               style={{ backgroundColor: color }}
                             />
-                            <span className="text-[14px]" style={{ color: "#374151" }}>
+                            <span className="text-[14px] text-on-surface">
                               {vLabel}
                             </span>
                           </div>
@@ -528,7 +518,7 @@ export default function FilterSidebar({
                           />
                         </div>
                       ))}
-                      <p className="text-[12px] mt-2 leading-snug" style={{ color: "#9ca3af" }}>
+                      <p className="mt-2 text-[12px] leading-snug text-outline">
                         Заглушка: на карту пока не влияет.
                       </p>
                     </div>
@@ -541,7 +531,7 @@ export default function FilterSidebar({
                         selected={selectedDepartureCities}
                         onToggle={onToggleDepartureCity}
                       />
-                      <span className="text-[13px]" style={{ color: "#9ca3af" }}>
+                      <span className="text-[13px] text-outline">
                         Скоро будет доступно
                       </span>
                     </div>

@@ -3,7 +3,6 @@ export type MapColorMode =
   | "safety"
   | "budget"
   | "season"
-  | "language"
   | "vacation"
   | "flight";
 

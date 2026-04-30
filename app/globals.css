@@ -1,5 +1,78 @@
 @import "tailwindcss";
 
+:root {
+  --site-header-height: 3.5rem;
+}
+
+@theme {
+  --color-surface-dim: #d8dadc;
+  --color-on-tertiary-container: #f9f6ff;
+  --color-on-primary-container: #f3f7ff;
+  --color-tertiary-fixed-dim: #bfc2ff;
+  --color-surface-container-low: #f2f4f6;
+  --color-on-secondary-fixed: #001f27;
+  --color-secondary: #0078d4;
+  --color-primary-container: #106ebe;
+  --color-on-secondary-container: #005c70;
+  --color-on-primary: #ffffff;
+  --color-on-tertiary-fixed: #070a61;
+  --color-on-tertiary-fixed-variant: #393e8c;
+  --color-error-container: #ffdad6;
+  --color-on-error-container: #93000a;
+  --color-outline-variant: #bfc7d1;
+  --color-surface-container-lowest: #ffffff;
+  --color-tertiary-container: #646aba;
+  --color-on-primary-fixed: #001d32;
+  --color-inverse-surface: #2d3133;
+  --color-surface: #ffffff;
+  --color-on-secondary: #ffffff;
+  --color-primary: #0078d4;
+  --color-primary-fixed: #cde5ff;
+  --color-on-background: #191c1e;
+  --color-background: #faf9f8;
+  --color-tertiary: #4c51a0;
+  --color-on-surface-variant: #404850;
+  --color-secondary-fixed-dim: #4cd6fb;
+  --color-surface-container-high: #e6e8ea;
+  --color-secondary-fixed: #b3ebff;
+  --color-primary-fixed-dim: #94ccff;
+  --color-inverse-primary: #94ccff;
+  --color-surface-bright: #f7f9fb;
+  --color-surface-variant: #e0e3e5;
+  --color-secondary-container: #50d9fe;
+  --color-surface-container-highest: #e0e3e5;
+  --color-on-error: #ffffff;
+  --color-on-secondary-fixed-variant: #004e5f;
+  --color-on-surface: #191c1e;
+  --color-error: #ba1a1a;
+  --color-on-tertiary: #ffffff;
+  --color-on-primary-fixed-variant: #004b74;
+  --color-surface-tint: #0078d4;
+  --color-outline: #707881;
+  --color-inverse-on-surface: #eff1f3;
+  --color-tertiary-fixed: #e0e0ff;
+  --color-surface-container: #eceef0;
+
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+
+  --shadow-azure-float: 0 12px 40px rgb(0 120 212 / 0.08);
+  --shadow-azure-card-hover: 0 12px 40px rgb(0 120 212 / 0.08);
+
+  --color-azure-nav-glass: rgb(247 249 251 / 0.8);
+
+  --animate-filter-drawer: filter-drawer 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes filter-drawer {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -13,8 +86,9 @@ html {
 body {
   width: 100%;
   overflow-y: scroll;
-  background-color: #edeae3;
-  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  background-color: var(--color-background);
+  color: var(--color-on-background);
+  font-family: var(--font-geist-sans), "Segoe UI", system-ui, sans-serif;
 }
 
 /* Кастомный toggle-переключатель */
@@ -42,7 +116,7 @@ body {
 }
 
 .toggle-switch input:checked + .toggle-track {
-  background-color: #2563eb;
+  background-color: var(--color-primary);
 }
 
 .toggle-thumb {
@@ -79,7 +153,7 @@ input[type="range"]::-webkit-slider-thumb {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: #2563eb;
+  background: var(--color-primary);
   cursor: pointer;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
@@ -88,7 +162,7 @@ input[type="range"]::-moz-range-thumb {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: #2563eb;
+  background: var(--color-primary);
   cursor: pointer;
   border: none;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);

@@ -69,7 +69,7 @@ export default function ArticleSection() {
     <section className="py-16 bg-gray-50">
       <div className="max-w-7xl mx-auto px-6">
         <div className="mb-10">
-          <h2 className="text-3xl font-bold text-gray-900">Статьи</h2>
+          <h2 className="text-3xl font-bold text-on-surface">Статьи</h2>
           <p className="mt-2 text-gray-500 text-base">
             Гайды, советы и маршруты для ваших путешествий
           </p>
@@ -92,7 +92,7 @@ export default function ArticleSection() {
               </div>
 
               <div className="p-5">
-                <h3 className="text-gray-900 font-semibold text-base leading-snug line-clamp-2">
+                <h3 className="text-on-surface font-semibold text-base leading-snug line-clamp-2">
                   {article.title}
                 </h3>
                 <div className="mt-4 flex items-center gap-3 text-gray-400 text-sm">

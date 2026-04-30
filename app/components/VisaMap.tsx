@@ -20,6 +20,9 @@ import type { MapColorMode } from "../types/map";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const MAPTILER_KEY = process.env.NEXT_PUBLIC_MAPTILER_KEY || "";
+/** ID стиля MapTiler (см. каталог https://cloud.maptiler.com/maps/); `azure` в API нет — 404. */
+const MAPTILER_STYLE_ID =
+  process.env.NEXT_PUBLIC_MAPTILER_STYLE?.trim() || "basic-v2";
 
 const SEASONS_SOURCE_ID = "country-seasons";
 const SEASONS_LAYER_ID = "seasons-fill";
@@ -88,10 +91,6 @@ interface VisaMapProps {
   seasonDistinctKeys: string[];
   onSeasonDistinctKeysLoaded?: (month: number, keys: string[]) => void;
   coloringEnabled: boolean;
-  /** Коды языков для фильтра (нижний регистр); пусто — язык не ограничивает */
-  selectedLanguageCodes: Set<string>;
-  /** iso2 (верхний регистр) → коды языков страны */
-  officialLanguageCodesByIso: Map<string, string[]>;
   /** Список iso2, проходящих тот же составной фильтр, что и раскраска карты */
   onMatchingIso2sChange?: (iso2s: string[]) => void;
   /** home_iso2 x dest_iso2 -> score из GET /travel-costs/{home_iso2} */
@@ -236,34 +235,6 @@ function applyAttributeColorsWithCompositeFilters(
   mapInstance.setPaintProperty("countries-fill", "fill-opacity", opacityExpression);
 }
 
-const LANGUAGE_PASS_COLOR = "#22c55e";
-
-function applyLanguageBinaryColors(
-  mapInstance: maplibregl.Map,
-  countryAttrs: Map<string, CountryAttrs>,
-  passes: (iso2: string) => boolean,
-  enabled: boolean,
-) {
-  if (!enabled) {
-    mapInstance.setPaintProperty("countries-fill", "fill-opacity", 0);
-    return;
-  }
-
-  const colorExpression: unknown[] = ["match", ["get", "iso2"]];
-  const opacityExpression: unknown[] = ["match", ["get", "iso2"]];
-
-  for (const [iso2] of countryAttrs) {
-    const ok = passes(iso2);
-    colorExpression.push(iso2, ok ? LANGUAGE_PASS_COLOR : NEUTRAL_COUNTRIES_COLOR);
-    opacityExpression.push(iso2, ok ? HIGH_FILL_OPACITY : DIM_FILL_OPACITY);
-  }
-  colorExpression.push(NEUTRAL_COUNTRIES_COLOR);
-  opacityExpression.push(DIM_FILL_OPACITY);
-
-  mapInstance.setPaintProperty("countries-fill", "fill-color", colorExpression);
-  mapInstance.setPaintProperty("countries-fill", "fill-opacity", opacityExpression);
-}
-
 function applyTravelCostColors(
   mapInstance: maplibregl.Map,
   scores: Record<string, number>,
@@ -346,8 +317,6 @@ export default function VisaMap({
   seasonDistinctKeys,
   onSeasonDistinctKeysLoaded,
   coloringEnabled,
-  selectedLanguageCodes,
-  officialLanguageCodesByIso,
   onMatchingIso2sChange,
   travelCostScores,
   travelCostScoreBands,
@@ -379,8 +348,8 @@ export default function VisaMap({
   const enrichedSeasonBaseMonthRef = useRef<number | null>(null);
   const onSeasonDistinctKeysLoadedRef = useRef(onSeasonDistinctKeysLoaded);
   const runSeasonGeodataFetchRef = useRef<() => void>(() => {});
-  const selectedLanguageCodesRef = useRef(selectedLanguageCodes);
-  const officialLanguageCodesByIsoRef = useRef(officialLanguageCodesByIso);
+
+
   const onMatchingIso2sChangeRef = useRef(onMatchingIso2sChange);
   const travelCostScoresRef = useRef(travelCostScores);
   const travelCostScoreBandsRef = useRef(travelCostScoreBands);
@@ -425,13 +394,7 @@ export default function VisaMap({
     onSeasonDistinctKeysLoadedRef.current = onSeasonDistinctKeysLoaded;
   }, [onSeasonDistinctKeysLoaded]);
 
-  useEffect(() => {
-    selectedLanguageCodesRef.current = selectedLanguageCodes;
-  }, [selectedLanguageCodes]);
 
-  useEffect(() => {
-    officialLanguageCodesByIsoRef.current = officialLanguageCodesByIso;
-  }, [officialLanguageCodesByIso]);
 
   useEffect(() => {
     onMatchingIso2sChangeRef.current = onMatchingIso2sChange;
@@ -467,21 +430,6 @@ export default function VisaMap({
       if (budget) {
         const score = travelCostScoresRef.current[iso2];
         if (score == null) {
-          return false;
-        }
-      }
-      const selLang = selectedLanguageCodesRef.current;
-      if (selLang.size > 0) {
-        const codes = officialLanguageCodesByIsoRef.current.get(iso2) ?? [];
-        const have = new Set(codes.map((c) => String(c).trim().toLowerCase()));
-        let langHit = false;
-        for (const s of selLang) {
-          if (have.has(String(s).trim().toLowerCase())) {
-            langHit = true;
-            break;
-          }
-        }
-        if (!langHit) {
           return false;
         }
       }
@@ -578,16 +526,6 @@ export default function VisaMap({
         travelCostScoresRef.current,
         budgetTierRef.current,
         bands,
-        passesForNonSeasonLayers,
-        true,
-      );
-      return;
-    }
-
-    if (mode === "language") {
-      applyLanguageBinaryColors(
-        m,
-        countryAttrsRef.current,
         passesForNonSeasonLayers,
         true,
       );
@@ -696,8 +634,14 @@ export default function VisaMap({
 
   const loadVisaMap = useCallback(async (passportIso2: string) => {
     if (!map.current || !mapLoadedRef.current) return;
+    const iso = passportIso2.trim();
+    if (!iso) {
+      visaDataRef.current = [];
+      refreshMapPaint();
+      return;
+    }
     try {
-      const response = await fetch(`${API_URL}/visa-map/${passportIso2}`);
+      const response = await fetch(`${API_URL}/visa-map/${iso}`);
       const visaData: VisaDetail[] = await response.json();
       visaDataRef.current = visaData;
       refreshMapPaint();
@@ -724,8 +668,6 @@ export default function VisaMap({
     activeSeasonTypes,
     seasonDistinctKeys,
     seasonMonth,
-    selectedLanguageCodes,
-    officialLanguageCodesByIso,
     travelCostScores,
     travelCostScoreBands,
   ]);
@@ -742,7 +684,7 @@ export default function VisaMap({
 
     const mapInstance = new maplibregl.Map({
       container,
-      style: `https://api.maptiler.com/maps/streets-v2/style.json?key=${MAPTILER_KEY}`,
+      style: `https://api.maptiler.com/maps/${MAPTILER_STYLE_ID}/style.json?key=${MAPTILER_KEY}`,
       center: [20, 20],
       zoom: 1.5,
       minZoom: 1,
@@ -751,6 +693,12 @@ export default function VisaMap({
 
     map.current = mapInstance;
     mapInstance.addControl(new maplibregl.NavigationControl(), "top-right");
+
+    const resizeMap = () => {
+      mapInstance.resize();
+    };
+    const ro = new ResizeObserver(resizeMap);
+    ro.observe(container);
 
     mapInstance.on("load", async () => {
       if (!map.current) return;
@@ -802,6 +750,7 @@ export default function VisaMap({
         });
 
         mapLoadedRef.current = true;
+        resizeMap();
         await loadVisaMapRef.current(passportRef.current);
         refreshMapPaintRef.current();
         runSeasonGeodataFetchRef.current();
@@ -871,6 +820,7 @@ export default function VisaMap({
     });
 
     return () => {
+      ro.disconnect();
       mapLoadedRef.current = false;
       mapInstance.remove();
       map.current = null;

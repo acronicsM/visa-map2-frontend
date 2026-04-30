@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -22,20 +22,19 @@ export default function PassportSelect({ value, onChange, bgColor }: Props) {
   const [countries, setCountries] = useState<Country[]>([]);
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
-  const [selected, setSelected] = useState<Country | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const selected = useMemo(() => {
+    if (!value || countries.length === 0) return null;
+    return countries.find((c) => c.iso2 === value) ?? null;
+  }, [value, countries]);
 
   useEffect(() => {
     fetch(`${API_URL}/countries`)
       .then((r) => r.json())
       .then((data: Country[]) => {
         setCountries(data);
-        // Синхронизируем selected с текущим value пропсом
-        if (value) {
-          const found = data.find((c) => c.iso2 === value);
-          if (found) setSelected(found);
-        }
       })
       .catch(console.error);
   }, []);
@@ -59,7 +58,6 @@ export default function PassportSelect({ value, onChange, bgColor }: Props) {
   );
 
   function select(country: Country) {
-    setSelected(country);
     onChange(country.iso2, country.name_ru);
     setOpen(false);
     setSearch("");
@@ -83,7 +81,7 @@ export default function PassportSelect({ value, onChange, bgColor }: Props) {
     <div ref={ref} className="relative w-full">
       {/* Контейнер с input */}
       <div
-        className="flex items-center gap-2 border border-slate-200 rounded-lg px-3 py-2.5 mt-0 mb-[5px] cursor-text hover:border-blue-400 transition-colors"
+        className="flex items-center gap-2 border border-outline-variant rounded-lg px-3 py-2.5 mt-0 mb-[5px] cursor-text hover:border-primary transition-colors"
         style={{ backgroundColor: bgColor ?? "#fff" }}
         onClick={() => { setOpen(true); inputRef.current?.focus(); }}
       >
@@ -94,7 +92,7 @@ export default function PassportSelect({ value, onChange, bgColor }: Props) {
           />
         )}
         {showOverlay ? (
-          <span className="flex-1 text-sm select-none text-slate-700 truncate">
+          <span className="flex-1 min-w-0 truncate select-none text-sm text-on-surface">
             {selected.name_ru}
           </span>
         ) : (
@@ -105,20 +103,20 @@ export default function PassportSelect({ value, onChange, bgColor }: Props) {
             value={search}
             onChange={handleInputChange}
             onFocus={handleInputFocus}
-            className="flex-1 bg-transparent outline-none text-sm text-slate-700 placeholder-slate-400 min-w-0"
+            className="flex-1 bg-transparent outline-none text-sm text-on-surface placeholder:text-outline min-w-0"
           />
         )}
-        <svg className="w-4 h-4 text-slate-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <svg className="w-4 h-4 shrink-0 text-outline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
       </div>
 
       {/* Дропдаун */}
       {open && (
-        <div className="absolute top-full left-0 right-0 bg-white rounded-lg shadow-xl border border-slate-100 z-50 overflow-hidden mt-1">
+        <div className="absolute top-full left-0 right-0 z-50 mt-1 overflow-hidden rounded-lg border border-outline-variant bg-white shadow-xl">
           <div className="max-h-56 overflow-y-auto">
             {filtered.length === 0 ? (
-              <div className="px-4 py-3 text-sm text-slate-400 text-center">
+              <div className="px-4 py-3 text-center text-sm text-outline">
                 Ничего не найдено
               </div>
             ) : (
@@ -126,10 +124,10 @@ export default function PassportSelect({ value, onChange, bgColor }: Props) {
                 <button
                   key={country.iso2}
                   onClick={() => select(country)}
-                  className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-slate-50 transition-colors text-left ${
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-primary-fixed-dim/30 transition-colors text-left ${
                     country.iso2 === value
-                      ? "bg-blue-50 text-blue-700"
-                      : "text-slate-700"
+                      ? "bg-primary-fixed-dim text-primary-container font-medium"
+                      : "text-on-surface"
                   }`}
                 >
                   <span
@@ -137,7 +135,7 @@ export default function PassportSelect({ value, onChange, bgColor }: Props) {
                     style={{ width: "20px", height: "15px" }}
                   />
                   <span className="flex-1 truncate">{country.name_ru}</span>
-                  <span className="text-xs text-slate-400 shrink-0">{country.iso2}</span>
+                  <span className="shrink-0 text-xs text-outline">{country.iso2}</span>
                 </button>
               ))
             )}

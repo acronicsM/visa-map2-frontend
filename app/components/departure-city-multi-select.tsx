@@ -26,9 +26,11 @@ export default function DepartureCityMultiSelect({
               onClick={() => onToggle(city)}
               className="rounded-full border px-2.5 py-1 text-[13px] transition-colors"
               style={{
-                color: "#374151",
-                borderColor: isOn ? "#2563eb" : "#c4c0b8",
-                backgroundColor: isOn ? "rgba(59, 130, 246, 0.12)" : "transparent",
+                color: "var(--color-on-surface)",
+                borderColor: isOn ? "var(--color-primary)" : "var(--color-outline-variant)",
+                backgroundColor: isOn
+                  ? "color-mix(in srgb, var(--color-primary) 14%, transparent)"
+                  : "transparent",
               }}
             >
               {city}

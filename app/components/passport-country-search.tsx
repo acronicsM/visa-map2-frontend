@@ -183,7 +183,9 @@ export default function PassportCountrySearch({
     suggestions.length > 0;
 
   useEffect(() => {
-    setHighlight(0);
+    queueMicrotask(() => {
+      setHighlight(0);
+    });
   }, [draft, suggestions.length]);
 
   useEffect(() => {

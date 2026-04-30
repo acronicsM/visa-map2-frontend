@@ -46,7 +46,7 @@ export const STUB_DEPARTURE_CITIES = [
 const FILTER_GROUPS = [
   { key: "citizenship" as const, label: "Гражданство" },
   { key: "safety" as const, label: "Безопасность" },
-  { key: "budget" as const, label: "Стоимость отдыха" },
+  { key: "budget" as const, label: "" },
   { key: "season" as const, label: "Сезонность" },
   { key: "vacation" as const, label: "Тип отдыха" },
   { key: "flight" as const, label: "Прямой перелет" },
@@ -356,6 +356,13 @@ export default function FilterSidebar({
                   <div
                     role="button"
                     tabIndex={0}
+                    aria-label={
+                      label.trim()
+                        ? label
+                        : key === "budget"
+                          ? "Стоимость отдыха"
+                          : label
+                    }
                     onClick={() => toggleSectionOpen(key)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") toggleSectionOpen(key);

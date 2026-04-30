@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MapColorMode } from "../types/map";
+import type { MatchingCountryRow } from "../types/matching-country";
 import type { TravelCostScoreBands } from "../lib/travel-cost-score-bands";
 import { getSeasonFilterRowPresentation } from "../lib/season-colors";
 
@@ -48,7 +49,9 @@ export function useHomeMapState() {
   const [selectedDepartureCities, setSelectedDepartureCities] = useState<
     Set<string>
   >(() => new Set());
-  const [matchingIso2s, setMatchingIso2s] = useState<string[]>([]);
+  const [matchingCountries, setMatchingCountries] = useState<
+    MatchingCountryRow[]
+  >([]);
   const [matchingListReady, setMatchingListReady] = useState(false);
   const [countryMetaByIso, setCountryMetaByIso] = useState<
     Map<string, { name_ru: string; flag_emoji?: string | null }>
@@ -135,8 +138,8 @@ export function useHomeMapState() {
     [distinctSeasonKeys],
   );
 
-  const handleMatchingIso2sChange = useCallback((iso2s: string[]) => {
-    setMatchingIso2s(iso2s);
+  const handleMatchingIso2sChange = useCallback((rows: MatchingCountryRow[]) => {
+    setMatchingCountries(rows);
     setMatchingListReady(true);
   }, []);
 
@@ -236,7 +239,7 @@ export function useHomeMapState() {
     sidebarOpen,
     activeVacationTypes,
     selectedDepartureCities,
-    matchingIso2s,
+    matchingCountries,
     matchingListReady,
     countryMetaByIso,
     travelCostScores,

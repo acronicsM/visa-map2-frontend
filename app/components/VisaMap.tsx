@@ -17,6 +17,7 @@ import {
   type TravelCostScoreBands,
 } from "../lib/travel-cost-score-bands";
 import type { MapColorMode } from "../types/map";
+import type { MatchingCountryRow } from "../types/matching-country";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const MAPTILER_KEY = process.env.NEXT_PUBLIC_MAPTILER_KEY || "";
@@ -91,8 +92,8 @@ interface VisaMapProps {
   seasonDistinctKeys: string[];
   onSeasonDistinctKeysLoaded?: (month: number, keys: string[]) => void;
   coloringEnabled: boolean;
-  /** Список iso2, проходящих тот же составной фильтр, что и раскраска карты */
-  onMatchingIso2sChange?: (iso2s: string[]) => void;
+  /** Направления с тем же составным фильтром, что и раскраска карты */
+  onMatchingIso2sChange?: (rows: MatchingCountryRow[]) => void;
   /** home_iso2 x dest_iso2 -> score из GET /travel-costs/{home_iso2} */
   travelCostScores: Record<string, number>;
   /** Пороги/подписи/цвета из GET /travel-costs/score-bands */
@@ -450,11 +451,20 @@ export default function VisaMap({
       return passesComposite(iso2, sk);
     };
 
-    const matchingIso2s = visaDataRef.current
+    const matchingRows: MatchingCountryRow[] = visaDataRef.current
       .filter((v) => passesForNonSeasonLayers(v.iso2))
-      .map((v) => v.iso2);
-    matchingIso2s.sort((a, b) => a.localeCompare(b));
-    onMatchingIso2sChangeRef.current?.(matchingIso2s);
+      .map((v) => {
+        const attrs = countryAttrsRef.current.get(v.iso2);
+        const safetyRaw = attrs?.safety_level;
+        const safety = normAttr(safetyRaw) || null;
+        return {
+          iso2: v.iso2,
+          visa_category: v.visa_category,
+          safety_level: safety,
+        };
+      });
+    matchingRows.sort((a, b) => a.iso2.localeCompare(b.iso2));
+    onMatchingIso2sChangeRef.current?.(matchingRows);
 
     if (!enabled) {
       m.setPaintProperty("countries-fill", "fill-opacity", 0);

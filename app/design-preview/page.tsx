@@ -104,7 +104,7 @@ export default function DesignPreviewPage() {
         </section>
 
         <TravelCollections
-          matchingIso2s={s.matchingIso2s}
+          matchingCountries={s.matchingCountries}
           countryMetaByIso={s.countryMetaByIso}
           listReady={s.matchingListReady}
           variant="azure"

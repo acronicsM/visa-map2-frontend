@@ -1,12 +1,31 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { MapColorMode } from "../types/map";
+import {
+  useCallback,
+  useDebugValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  ALL_AFFORDABILITY_BAND_KEYS,
+  type AffordabilityBandKey,
+  type MapColorMode,
+  type TravelSpendingTier,
+} from "../types/map";
 import type { MatchingCountryRow } from "../types/matching-country";
 import type { TravelCostScoreBands } from "../lib/travel-cost-score-bands";
 import { getSeasonFilterRowPresentation } from "../lib/season-colors";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+/** Включить в `.env.local`: `NEXT_PUBLIC_DEBUG_TRAVEL_COST_SCORE_BANDS=true` — логи по `/travel-costs/score-bands`. */
+const DEBUG_TRAVEL_COST_SCORE_BANDS =
+  process.env.NEXT_PUBLIC_DEBUG_TRAVEL_COST_SCORE_BANDS === "true" ||
+  process.env.NEXT_PUBLIC_DEBUG_TRAVEL_COST_SCORE_BANDS === "1";
+
+export type TravelCostScoreBandsStatus = "pending" | "ok" | "error";
 
 const ALL_CATEGORIES = new Set(["free", "evisa", "voa", "embassy", "unavailable"]);
 const ALL_SAFETY_LEVELS = new Set(["safe", "unsafe", "dangerous"]);
@@ -33,8 +52,12 @@ export function useHomeMapState() {
   const [activeSafetyLevels, setActiveSafetyLevels] = useState<Set<string>>(
     () => new Set(ALL_SAFETY_LEVELS),
   );
-  const [budgetTier, setBudgetTier] = useState<string | null>(null);
-  const [mapColorMode, setMapColorMode] = useState<MapColorMode>("citizenship");
+  const [travelSpendingTier, setTravelSpendingTier] =
+    useState<TravelSpendingTier>("normal");
+  const [activeAffordabilityBands, setActiveAffordabilityBands] = useState<
+    Set<AffordabilityBandKey>
+  >(() => new Set());
+  const [mapColorMode, setMapColorModeState] = useState<MapColorMode>("citizenship");
   const [seasonMonth, setSeasonMonth] = useState(() => new Date().getMonth() + 1);
   const [distinctSeasonKeys, setDistinctSeasonKeys] = useState<string[]>([]);
   const [activeSeasonTypes, setActiveSeasonTypes] = useState<Set<string>>(
@@ -59,6 +82,28 @@ export function useHomeMapState() {
   const [travelCostScores, setTravelCostScores] = useState<Record<string, number>>({});
   const [travelCostScoreBands, setTravelCostScoreBands] =
     useState<TravelCostScoreBands | null>(null);
+  const [travelCostScoreBandsStatus, setTravelCostScoreBandsStatus] =
+    useState<TravelCostScoreBandsStatus>("pending");
+  const scoreBandsSlowLoggedRef = useRef(false);
+
+  useDebugValue(travelCostScoreBandsStatus, (s) => `score-bands: ${s}`);
+
+  const setMapColorMode = useCallback((mode: MapColorMode) => {
+    setMapColorModeState(mode);
+  }, []);
+
+  /** При первом входе в режим «бюджет» включаем все полосы, если список пуст. Смена только полос без смены режима не трогает набор. */
+  const prevMapColorModeRef = useRef<MapColorMode>("citizenship");
+
+  useEffect(() => {
+    const prev = prevMapColorModeRef.current;
+    if (mapColorMode === "budget" && prev !== "budget") {
+      setActiveAffordabilityBands((bands) =>
+        bands.size > 0 ? bands : new Set(ALL_AFFORDABILITY_BAND_KEYS),
+      );
+    }
+    prevMapColorModeRef.current = mapColorMode;
+  }, [mapColorMode]);
 
   const seasonMonthRef = useRef(seasonMonth);
 
@@ -89,31 +134,86 @@ export function useHomeMapState() {
 
   useEffect(() => {
     let cancelled = false;
-    void fetch(`${API_URL}/travel-costs/score-bands`)
+    const url = `${API_URL}/travel-costs/score-bands`;
+    void fetch(url)
       .then((r) => {
-        if (!r.ok) throw new Error(String(r.status));
+        if (!r.ok) {
+          throw new Error(`HTTP ${r.status}`);
+        }
         return r.json();
       })
       .then((data: TravelCostScoreBands) => {
         if (cancelled) return;
-        if (
+        const okShape =
           data &&
           Array.isArray(data.thresholds) &&
           Array.isArray(data.labels) &&
-          Array.isArray(data.colors)
-        ) {
+          Array.isArray(data.colors);
+        if (okShape) {
           setTravelCostScoreBands(data);
+          setTravelCostScoreBandsStatus("ok");
+          if (DEBUG_TRAVEL_COST_SCORE_BANDS) {
+            // eslint-disable-next-line no-console
+            console.info(
+              "[travel-costs/score-bands] OK",
+              {
+                thresholds: data.thresholds,
+                labelsCount: data.labels.length,
+              },
+              url,
+            );
+          }
         } else {
           setTravelCostScoreBands(null);
+          setTravelCostScoreBandsStatus("error");
+          if (DEBUG_TRAVEL_COST_SCORE_BANDS) {
+            // eslint-disable-next-line no-console
+            console.warn(
+              "[travel-costs/score-bands] неверная форма ответа, пороги недоступны (fallback на клиенте)",
+              data,
+              url,
+            );
+          }
         }
       })
-      .catch(() => {
-        if (!cancelled) setTravelCostScoreBands(null);
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setTravelCostScoreBands(null);
+        setTravelCostScoreBandsStatus("error");
+        if (DEBUG_TRAVEL_COST_SCORE_BANDS) {
+          const msg = err instanceof Error ? err.message : String(err);
+          // eslint-disable-next-line no-console
+          console.warn(
+            "[travel-costs/score-bands] запрос не удался, пороги недоступны (fallback на клиенте):",
+            msg,
+            url,
+          );
+        }
       });
     return () => {
       cancelled = true;
     };
   }, []);
+
+  /** Пока `fetch` в полёте, `travelCostScoreBands === null` — на карте временно DEFAULT; это не ошибка. */
+  useEffect(() => {
+    if (!DEBUG_TRAVEL_COST_SCORE_BANDS || travelCostScoreBandsStatus !== "pending") {
+      return;
+    }
+    const t = window.setTimeout(() => {
+      if (scoreBandsSlowLoggedRef.current) {
+        return;
+      }
+      scoreBandsSlowLoggedRef.current = true;
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[travel-costs/score-bands] ответ ещё не пришёл (~1.5s): карта может кратко использовать клиентский DEFAULT. " +
+          "Проверьте сеть и что API доступен по",
+        `${API_URL}/travel-costs/score-bands`,
+      );
+    }, 1500);
+    return () => window.clearTimeout(t);
+  }, [travelCostScoreBandsStatus]);
 
   useEffect(() => {
     seasonMonthRef.current = seasonMonth;
@@ -149,7 +249,7 @@ export function useHomeMapState() {
 
   useEffect(() => {
     let cancelled = false;
-    if (!budgetTier || !passport.trim()) {
+    if (!passport.trim()) {
       queueMicrotask(() => {
         if (!cancelled) setTravelCostScores({});
       });
@@ -157,7 +257,9 @@ export function useHomeMapState() {
         cancelled = true;
       };
     }
-    void fetch(`${API_URL}/travel-costs/${passport}?budget_tier=${budgetTier}`)
+    void fetch(
+      `${API_URL}/travel-costs/${passport}?budget_tier=${travelSpendingTier}`,
+    )
       .then((r) => r.json())
       .then((data: { scores: Record<string, number> }) => {
         if (!cancelled) setTravelCostScores(data.scores ?? {});
@@ -168,7 +270,7 @@ export function useHomeMapState() {
     return () => {
       cancelled = true;
     };
-  }, [passport, budgetTier]);
+  }, [passport, travelSpendingTier]);
 
   const handleToggleCategory = useCallback((key: string) => {
     setActiveCategories((prev) => {
@@ -191,13 +293,26 @@ export function useHomeMapState() {
     });
   }, []);
 
-  const handleBudgetTierChange = useCallback((tier: string | null) => {
-    setBudgetTier(tier);
-    if (tier) {
+  const handleTravelSpendingTierChange = useCallback((tier: TravelSpendingTier) => {
+    setTravelSpendingTier(tier);
+  }, []);
+
+  const handleToggleAffordabilityBand = useCallback(
+    (key: AffordabilityBandKey) => {
+      setActiveAffordabilityBands((prev) => {
+        const next = new Set(prev);
+        if (next.has(key)) {
+          next.delete(key);
+        } else {
+          next.add(key);
+        }
+        return next;
+      });
       setMapColorMode("budget");
       setColoringEnabled(true);
-    }
-  }, []);
+    },
+    [setMapColorMode],
+  );
 
   const handleToggleSeasonType = useCallback((key: string) => {
     setActiveSeasonTypes((prev) => {
@@ -230,7 +345,8 @@ export function useHomeMapState() {
     passport,
     activeCategories,
     activeSafetyLevels,
-    budgetTier,
+    travelSpendingTier,
+    activeAffordabilityBands,
     mapColorMode,
     seasonMonth,
     distinctSeasonKeys,
@@ -244,6 +360,7 @@ export function useHomeMapState() {
     countryMetaByIso,
     travelCostScores,
     travelCostScoreBands,
+    travelCostScoreBandsStatus,
     seasonFilterRows,
     setSidebarOpen,
     setMapColorMode,
@@ -253,7 +370,8 @@ export function useHomeMapState() {
     handleMatchingIso2sChange,
     handleToggleCategory,
     handleToggleSafetyLevel,
-    handleBudgetTierChange,
+    handleTravelSpendingTierChange,
+    handleToggleAffordabilityBand,
     handleToggleSeasonType,
     handleToggleVacationType,
     handleToggleDepartureCity,

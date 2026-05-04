@@ -1,28 +1,37 @@
 "use client";
 
-import { Fragment, useRef, useState } from "react";
+import { Fragment, useId, useRef, useState } from "react";
 import PassportSelect from "./PassportSelect";
 import DepartureCityMultiSelect from "./departure-city-multi-select";
-import type { MapColorMode } from "../types/map";
+import type {
+  AffordabilityBandKey,
+  MapColorMode,
+  TravelSpendingTier,
+} from "../types/map";
+import {
+  affordabilityBandSidebarColor,
+  type TravelCostScoreBands,
+} from "../lib/travel-cost-score-bands";
+import { currencyForPassportCountry } from "../lib/country-currency";
+import {
+  MAP_SAFETY_FILL_COLORS,
+  MAP_VISA_FILL_COLORS,
+  SIDEBAR_SAFETY_FILTER_ROWS,
+  SIDEBAR_VISA_FILTER_ROWS,
+} from "../lib/map-fill-palettes";
 
-const VISA_CATEGORIES: { key: string; label: string; color: string }[] = [
-  { key: "free", label: "Без визы", color: "#22c55e" },
-  { key: "evisa", label: "Электронная виза", color: "#eab308" },
-  { key: "voa", label: "По прибытию", color: "#3b82f6" },
-  { key: "embassy", label: "Нужна виза", color: "#ef4444" },
-  { key: "unavailable", label: "Недоступно", color: "#6b7280" },
+const SPENDING_TIER_OPTIONS: { key: TravelSpendingTier; label: string }[] = [
+  { key: "cheap", label: "Скромно" },
+  { key: "normal", label: "Умеренно" },
+  { key: "expensive", label: "Щедро" },
 ];
 
-const SAFETY_LEVELS: { key: string; label: string; color: string }[] = [
-  { key: "safe", label: "Безопасно", color: "#22c55e" },
-  { key: "unsafe", label: "Риски", color: "#eab308" },
-  { key: "dangerous", label: "Опасно", color: "#ef4444" },
-];
-
-const BUDGET_TIERS: { key: string; label: string; color: string }[] = [
-  { key: "cheap", label: "Эконом", color: "#22c55e" },
-  { key: "normal", label: "Средний", color: "#eab308" },
-  { key: "expensive", label: "Премиум", color: "#ef4444" },
+/** Порядок строк в UI; цвет точки — из `travelCostScoreBands` (как на карте). */
+const AFFORDABILITY_OPTIONS: { key: AffordabilityBandKey; label: string }[] = [
+  { key: "beyond_budget", label: "Вне бюджета" },
+  { key: "skimp", label: "Придется экономить" },
+  { key: "comfort", label: "Комфортно" },
+  { key: "carefree", label: "Без забот" },
 ];
 
 const VACATION_TYPES: { key: string; label: string; color: string }[] = [
@@ -46,7 +55,7 @@ export const STUB_DEPARTURE_CITIES = [
 const FILTER_GROUPS = [
   { key: "citizenship" as const, label: "Гражданство" },
   { key: "safety" as const, label: "Безопасность" },
-  { key: "budget" as const, label: "" },
+  { key: "budget" as const, label: "Стоимость путешествия" },
   { key: "season" as const, label: "Сезонность" },
   { key: "vacation" as const, label: "Тип отдыха" },
   { key: "flight" as const, label: "Прямой перелет" },
@@ -148,6 +157,191 @@ function SeasonMonthRail({
   );
 }
 
+function TravelSpendingRail({
+  value,
+  onChange,
+}: {
+  value: TravelSpendingTier;
+  onChange: (tier: TravelSpendingTier) => void;
+}) {
+  const sepClass =
+    "w-px shrink-0 self-stretch bg-[#c4c0b8] min-h-9 pointer-events-none select-none";
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Уровень расходов: скромно, умеренно или щедро"
+      className="flex w-full items-stretch overflow-hidden rounded-md border border-outline-variant bg-white outline-none focus-within:ring-2 focus-within:ring-primary focus-within:ring-offset-2 focus-within:ring-offset-surface-container"
+    >
+      <span className={sepClass} aria-hidden />
+      {SPENDING_TIER_OPTIONS.map((opt) => {
+        const selected = value === opt.key;
+        return (
+          <Fragment key={opt.key}>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              onClick={() => onChange(opt.key)}
+              className="min-h-9 min-w-0 flex-1 px-1 py-1.5 text-center text-[11px] font-medium leading-tight transition-colors hover:bg-black/5 sm:text-xs"
+              style={{
+                color: selected
+                  ? "var(--color-primary)"
+                  : "var(--color-on-surface-variant)",
+                backgroundColor: selected
+                  ? "color-mix(in srgb, var(--color-primary) 14%, transparent)"
+                  : "transparent",
+              }}
+            >
+              {opt.label}
+            </button>
+            <span className={sepClass} aria-hidden />
+          </Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
+function BudgetLinkChevron({ open }: { open: boolean }) {
+  return (
+    <svg
+      className={`h-3 w-3 shrink-0 text-primary transition-transform duration-300 ease-out ${
+        open ? "rotate-180" : ""
+      }`}
+      viewBox="0 0 20 20"
+      fill="currentColor"
+      aria-hidden
+    >
+      <path
+        fillRule="evenodd"
+        d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.24 4.5a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z"
+        clipRule="evenodd"
+      />
+    </svg>
+  );
+}
+
+/** Переключатель «уровни бюджета» (рельса) и числовые поля; ссылка с кавычками и стрелкой вниз. */
+function BudgetSpendingSection({
+  value,
+  onChange,
+  passportIso2,
+}: {
+  value: TravelSpendingTier;
+  onChange: (tier: TravelSpendingTier) => void;
+  passportIso2: string;
+}) {
+  const fieldsetId = useId();
+  const toggleId = `${fieldsetId}-toggle`;
+  const panelId = `${fieldsetId}-numeric`;
+  const [numericOpen, setNumericOpen] = useState(false);
+  const [budgetAmount, setBudgetAmount] = useState("");
+  const [tripDays, setTripDays] = useState("");
+  const homeCurrency = currencyForPassportCountry(passportIso2);
+
+  return (
+    <div className="flex flex-col gap-2 min-h-0">
+      <div
+        className={`grid transition-[grid-template-rows] duration-300 ease-out ${
+          numericOpen ? "grid-rows-[0fr]" : "grid-rows-[1fr]"
+        }`}
+      >
+        <div
+          className={`min-h-0 overflow-hidden ${
+            numericOpen ? "pointer-events-none" : ""
+          }`}
+        >
+          <div className="flex flex-col gap-2">
+            <span className="block text-[13px] font-medium text-on-surface">
+              Ваш бюджет на путешествие
+            </span>
+            <TravelSpendingRail value={value} onChange={onChange} />
+          </div>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        onClick={() => setNumericOpen((o) => !o)}
+        className="flex w-full items-center justify-center gap-1 py-0.5 text-[13px] font-medium text-primary underline-offset-2 hover:underline focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface-container"
+        aria-expanded={numericOpen}
+        aria-controls={panelId}
+        id={toggleId}
+      >
+        <span className="font-serif text-[14px] leading-none text-primary/75" aria-hidden>
+          «
+        </span>
+        <span className="min-w-0">
+          {numericOpen ? "Ощущения бюджета" : "Уточнить бюджет"}
+        </span>
+        <span className="font-serif text-[14px] leading-none text-primary/75" aria-hidden>
+          »
+        </span>
+        <BudgetLinkChevron open={numericOpen} />
+      </button>
+
+      <div
+        className={`grid transition-[grid-template-rows] duration-300 ease-out ${
+          numericOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+        }`}
+      >
+        <div className="min-h-0 overflow-hidden">
+          <div
+            id={panelId}
+            role="region"
+            aria-labelledby={toggleId}
+            className="flex flex-col gap-3 border-t border-outline-variant/50 pt-3"
+          >
+            <label className="flex flex-col gap-1">
+              <span className="text-[12px] font-medium text-on-surface-variant">
+                Бюджет
+              </span>
+              <div className="flex min-w-0 items-center gap-2">
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min={0}
+                  step="any"
+                  className="min-w-0 flex-1 rounded-md border border-outline-variant bg-white px-2.5 py-2 text-[14px] text-on-surface outline-none transition-shadow focus-visible:ring-2 focus-visible:ring-primary"
+                  value={budgetAmount}
+                  onChange={(e) => setBudgetAmount(e.target.value)}
+                  placeholder="Сумма"
+                  aria-describedby={
+                    homeCurrency ? `${panelId}-budget-currency` : undefined
+                  }
+                />
+                {homeCurrency ? (
+                  <span
+                    id={`${panelId}-budget-currency`}
+                    className="shrink-0 tabular-nums text-[13px] font-medium text-on-surface-variant"
+                  >
+                    {homeCurrency}
+                  </span>
+                ) : null}
+              </div>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[12px] font-medium text-on-surface-variant">
+                Дней путешествия
+              </span>
+              <input
+                type="number"
+                inputMode="numeric"
+                min={1}
+                step={1}
+                className="rounded-md border border-outline-variant bg-white px-2.5 py-2 text-[14px] text-on-surface outline-none transition-shadow focus-visible:ring-2 focus-visible:ring-primary"
+                value={tripDays}
+                onChange={(e) => setTripDays(e.target.value)}
+                placeholder="Например, 7"
+              />
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 interface FilterSidebarProps {
   passport: string;
   onPassportChange: (iso2: string, nameRu?: string) => void;
@@ -155,8 +349,10 @@ interface FilterSidebarProps {
   onToggleCategory: (key: string) => void;
   activeSafetyLevels: Set<string>;
   onToggleSafetyLevel: (key: string) => void;
-  budgetTier: string | null;
-  onBudgetTierChange: (tier: string | null) => void;
+  travelSpendingTier: TravelSpendingTier;
+  onTravelSpendingTierChange: (tier: TravelSpendingTier) => void;
+  activeAffordabilityBands: Set<AffordabilityBandKey>;
+  onToggleAffordabilityBand: (key: AffordabilityBandKey) => void;
   mapColorMode: MapColorMode;
   onMapColorModeChange: (mode: MapColorMode) => void;
   seasonMonth: number;
@@ -164,6 +360,8 @@ interface FilterSidebarProps {
   activeSeasonTypes: Set<string>;
   onToggleSeasonType: (key: string) => void;
   seasonFilterRows: { key: string; label: string; color: string }[];
+  /** Пороги/цвета score с API — кружки «стоимость» совпадают с карточкой карты */
+  travelCostScoreBands: TravelCostScoreBands | null;
   coloringEnabled: boolean;
   onColoringEnabledChange: (enabled: boolean) => void;
   isOpen: boolean;
@@ -240,8 +438,10 @@ export default function FilterSidebar({
   onToggleCategory,
   activeSafetyLevels,
   onToggleSafetyLevel,
-  budgetTier,
-  onBudgetTierChange,
+  travelSpendingTier,
+  onTravelSpendingTierChange,
+  activeAffordabilityBands,
+  onToggleAffordabilityBand,
   mapColorMode,
   onMapColorModeChange,
   seasonMonth,
@@ -249,6 +449,7 @@ export default function FilterSidebar({
   activeSeasonTypes,
   onToggleSeasonType,
   seasonFilterRows,
+  travelCostScoreBands,
   coloringEnabled,
   onColoringEnabledChange,
   isOpen,
@@ -356,13 +557,7 @@ export default function FilterSidebar({
                   <div
                     role="button"
                     tabIndex={0}
-                    aria-label={
-                      label.trim()
-                        ? label
-                        : key === "budget"
-                          ? "Стоимость отдыха"
-                          : label
-                    }
+                    aria-label={label.trim() ? label : key}
                     onClick={() => toggleSectionOpen(key)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") toggleSectionOpen(key);
@@ -393,12 +588,15 @@ export default function FilterSidebar({
                       )}
 
                       <div className="mx-[2px] flex flex-col justify-end gap-1 px-3 pb-4">
-                        {VISA_CATEGORIES.map(({ key: catKey, label: catLabel, color }) => (
+                        {SIDEBAR_VISA_FILTER_ROWS.map(({ key: catKey, label: catLabel }) => (
                           <div key={catKey} className="flex items-center justify-between">
                             <div className="flex items-center gap-0.5">
                               <span
                                 className="w-3.5 h-3.5 rounded-full shrink-0"
-                                style={{ backgroundColor: color }}
+                                style={{
+                                  backgroundColor:
+                                    MAP_VISA_FILL_COLORS[catKey] ?? "#94a3b8",
+                                }}
                               />
                               <span className="text-[14px] text-on-surface">
                                 {catLabel}
@@ -416,12 +614,15 @@ export default function FilterSidebar({
 
                   {isSectionOpen && key === "safety" && (
                     <div className="px-3 pb-4 flex flex-col gap-1 mx-[2px]">
-                      {SAFETY_LEVELS.map(({ key: levKey, label: levLabel, color }) => (
+                      {SIDEBAR_SAFETY_FILTER_ROWS.map(({ key: levKey, label: levLabel }) => (
                         <div key={levKey} className="flex items-center justify-between">
                           <div className="flex items-center gap-0.5">
                             <span
                               className="w-3.5 h-3.5 rounded-full shrink-0"
-                              style={{ backgroundColor: color }}
+                              style={{
+                                backgroundColor:
+                                  MAP_SAFETY_FILL_COLORS[levKey] ?? "#94a3b8",
+                              }}
                             />
                             <span className="text-[14px] text-on-surface">
                               {levLabel}
@@ -437,28 +638,39 @@ export default function FilterSidebar({
                   )}
 
                   {isSectionOpen && key === "budget" && (
-                    <div className="px-3 pb-4 flex flex-col gap-1 mx-[2px]">
-                      {BUDGET_TIERS.map(({ key: bKey, label: bLabel, color }) => (
-                        <div key={bKey} className="flex items-center justify-between">
-                          <div className="flex items-center gap-0.5">
-                            <span
-                              className="w-3.5 h-3.5 rounded-full shrink-0"
-                              style={{ backgroundColor: color }}
-                            />
-                            <span className="text-[14px] text-on-surface">
-                              {bLabel}
-                            </span>
-                          </div>
-                          <Toggle
-                            checked={budgetTier === bKey}
-                            onChange={() =>
-                              onBudgetTierChange(
-                                budgetTier === bKey ? null : bKey,
-                              )
-                            }
-                          />
-                        </div>
-                      ))}
+                    <div className="mx-[2px] flex flex-col gap-3 px-3 pb-4">
+                      <BudgetSpendingSection
+                        value={travelSpendingTier}
+                        onChange={onTravelSpendingTierChange}
+                        passportIso2={passport}
+                      />
+                      <div className="flex flex-col gap-1">
+                        {AFFORDABILITY_OPTIONS.map(({ key: bKey, label: bLabel }) => (
+                            <div key={bKey} className="flex items-center justify-between">
+                              <div className="flex items-center gap-0.5 min-w-0">
+                                <span
+                                  className="h-3.5 w-3.5 shrink-0 rounded-full"
+                                  style={{
+                                    backgroundColor: affordabilityBandSidebarColor(
+                                      travelCostScoreBands,
+                                      bKey,
+                                    ),
+                                  }}
+                                />
+                                <span
+                                  className="text-[14px] text-on-surface"
+                                  title={bLabel}
+                                >
+                                  {bLabel}
+                                </span>
+                              </div>
+                              <Toggle
+                                checked={activeAffordabilityBands.has(bKey)}
+                                onChange={() => onToggleAffordabilityBand(bKey)}
+                              />
+                            </div>
+                          ))}
+                      </div>
                     </div>
                   )}
 

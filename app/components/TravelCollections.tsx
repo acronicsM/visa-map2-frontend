@@ -15,7 +15,6 @@ interface TravelCollectionsProps {
   matchingCountries: MatchingCountryRow[];
   countryMetaByIso: Map<string, CountryCardMeta>;
   listReady: boolean;
-  variant?: "default" | "azure";
 }
 
 const VISA_CATEGORY_LABELS: Record<string, string> = {
@@ -144,29 +143,25 @@ function CountryCardCarousel({
 function FilteredCountryCard({
   iso2,
   title,
-  isAzure,
   imageUrls,
   visaSummary,
   safetySummary,
 }: {
   iso2: string;
   title: string;
-  isAzure: boolean;
   imageUrls: string[];
   visaSummary: string;
   safetySummary: string;
 }) {
   const tripHref = `/trip/${encodeURIComponent(iso2)}`;
   const isoLc = iso2.trim().slice(0, 2).toLowerCase();
-  const cardShadow = isAzure
-    ? "shadow-[0_8px_30px_rgba(0,0,0,0.02)] hover:shadow-(--shadow-azure-card-hover)"
-    : "shadow-[0_8px_30px_rgba(0,0,0,0.02)] hover:shadow-[0_12px_40px_rgba(0,120,212,0.08)]";
+  const cardShadow =
+    "shadow-[0_8px_30px_rgba(0,0,0,0.02)] hover:shadow-(--shadow-azure-card-hover)";
   const cardLayout = "w-72 flex-none snap-start";
-  const cardHeight = isAzure ? "h-[465px]" : "";
 
   return (
     <div
-      className={`group relative overflow-hidden rounded-3xl bg-surface-container-lowest transition-all duration-500 ${cardHeight} ${cardLayout} ${cardShadow}`}
+      className={`group relative h-[465px] overflow-hidden rounded-3xl bg-surface-container-lowest transition-all duration-500 ${cardLayout} ${cardShadow}`}
     >
       <Link
         href={tripHref}
@@ -296,64 +291,30 @@ export default function TravelCollections({
   matchingCountries,
   countryMetaByIso,
   listReady,
-  variant = "default",
 }: TravelCollectionsProps) {
-  const isAzure = variant === "azure";
-
-  const sectionClass = isAzure
-    ? "py-24 bg-surface px-6 lg:px-8"
-    : "py-16 bg-white";
-
-  const descClass = isAzure
-    ? "mt-2 text-[11px] text-on-surface-variant"
-    : "mt-2 text-gray-500 text-[11px]";
-
-  const emptyOuter = isAzure
-    ? "rounded-xl border border-dashed border-outline-variant/20 bg-surface-container-low py-8 text-center px-6"
-    : "px-6 pb-4 rounded-xl border border-dashed border-gray-200 bg-gray-50 py-8 text-center";
-
-  const looseFilters = isAzure
-    ? "Ослабьте ограничения в панели фильтров (виза, безопасность, бюджет, язык или сезон), чтобы увидеть больше направлений."
-    : "Ослабьте ограничения в боковой панели (виза, безопасность, бюджет, язык или сезон), чтобы увидеть больше направлений.";
+  const looseFilters =
+    "Ослабьте ограничения в боковой панели (виза, безопасность, бюджет, язык или сезон), чтобы увидеть больше направлений.";
 
   return (
-    <section className={sectionClass}>
-      <div className={isAzure ? "max-w-7xl mx-auto" : undefined}>
-        <div className={isAzure ? "mb-8" : "px-6 mb-8"}>
-          <p className={descClass}>
+    <section className="py-24 bg-surface px-6 lg:px-8">
+      <div className="mx-auto max-w-7xl">
+        <div className="mb-8">
+          <p className="mt-2 text-[11px] text-on-surface-variant">
             Страны, которые соответствуют выбранным условиям на карте. Скоро здесь будет
             подбор путешествия: перелёты, отели и справка по стране.
           </p>
         </div>
 
         {!listReady ? (
-          <div
-            className={
-              isAzure
-                ? "pb-4 text-sm text-on-surface-variant"
-                : "px-6 pb-4 text-gray-500 text-sm"
-            }
-          >
+          <div className="pb-4 text-sm text-on-surface-variant">
             Загружаем список направлений…
           </div>
         ) : matchingCountries.length === 0 ? (
-          <div className={isAzure ? emptyOuter : `px-6 pb-4 ${emptyOuter}`}>
-            <p
-              className={
-                isAzure
-                  ? "text-on-surface font-medium"
-                  : "text-gray-700 font-medium"
-              }
-            >
+          <div className="rounded-xl border border-dashed border-outline-variant/20 bg-surface-container-low px-6 py-8 text-center">
+            <p className="font-medium text-on-surface">
               Нет стран по этим фильтрам
             </p>
-            <p
-              className={
-                isAzure
-                  ? "mt-2 max-w-md mx-auto text-sm text-on-surface-variant"
-                  : "mt-2 text-gray-500 text-sm max-w-md mx-auto"
-              }
-            >
+            <p className="mx-auto mt-2 max-w-md text-sm text-on-surface-variant">
               {looseFilters}
             </p>
           </div>
@@ -369,7 +330,6 @@ export default function TravelCollections({
                   key={iso2Norm}
                   iso2={iso2Norm}
                   title={title}
-                  isAzure={isAzure}
                   visaSummary={visaTypeLabel(row.visa_category)}
                   safetySummary={safetyLevelLabel(row.safety_level)}
                   imageUrls={DEFAULT_COUNTRY_IMAGE_URLS}

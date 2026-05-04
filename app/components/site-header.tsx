@@ -28,12 +28,6 @@ export default function SiteHeader() {
           >
             Карта
           </Link>
-          <Link
-            href="/design-preview"
-            className="rounded-md px-2 py-1.5 text-on-surface-variant transition-colors hover:bg-surface-container-high hover:text-on-surface sm:px-3"
-          >
-            Превью UI
-          </Link>
         </nav>
       </div>
     </header>

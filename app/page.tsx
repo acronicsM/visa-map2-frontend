@@ -25,8 +25,10 @@ export default function Home() {
           onToggleCategory={s.handleToggleCategory}
           activeSafetyLevels={s.activeSafetyLevels}
           onToggleSafetyLevel={s.handleToggleSafetyLevel}
-          budgetTier={s.budgetTier}
-          onBudgetTierChange={s.handleBudgetTierChange}
+          travelSpendingTier={s.travelSpendingTier}
+          onTravelSpendingTierChange={s.handleTravelSpendingTierChange}
+          activeAffordabilityBands={s.activeAffordabilityBands}
+          onToggleAffordabilityBand={s.handleToggleAffordabilityBand}
           mapColorMode={s.mapColorMode}
           onMapColorModeChange={s.setMapColorMode}
           seasonMonth={s.seasonMonth}
@@ -34,6 +36,7 @@ export default function Home() {
           activeSeasonTypes={s.activeSeasonTypes}
           onToggleSeasonType={s.handleToggleSeasonType}
           seasonFilterRows={s.seasonFilterRows}
+          travelCostScoreBands={s.travelCostScoreBands}
           coloringEnabled={s.coloringEnabled}
           onColoringEnabledChange={s.setColoringEnabled}
           isOpen={s.sidebarOpen}
@@ -68,7 +71,7 @@ export default function Home() {
             mapColorMode={s.mapColorMode}
             seasonMonth={s.seasonMonth}
             activeSafetyLevels={s.activeSafetyLevels}
-            budgetTier={s.budgetTier}
+            activeAffordabilityBands={s.activeAffordabilityBands}
             activeSeasonTypes={s.activeSeasonTypes}
             seasonDistinctKeys={s.distinctSeasonKeys}
             onSeasonDistinctKeysLoaded={s.onSeasonDistinctKeysLoaded}
@@ -91,7 +94,6 @@ export default function Home() {
         matchingCountries={s.matchingCountries}
         countryMetaByIso={s.countryMetaByIso}
         listReady={s.matchingListReady}
-        variant="azure"
       />
       <ArticleSection />
       <Footer />

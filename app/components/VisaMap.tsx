@@ -13,10 +13,15 @@ import {
 } from "../lib/season-colors";
 import {
   DEFAULT_TRAVEL_COST_SCORE_BANDS,
+  scoreMatchesActiveAffordabilityBands,
   travelCostColorForScore,
   type TravelCostScoreBands,
 } from "../lib/travel-cost-score-bands";
-import type { MapColorMode } from "../types/map";
+import {
+  MAP_SAFETY_FILL_COLORS,
+  MAP_VISA_FILL_COLORS,
+} from "../lib/map-fill-palettes";
+import type { AffordabilityBandKey, MapColorMode } from "../types/map";
 import type { MatchingCountryRow } from "../types/matching-country";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -27,22 +32,6 @@ const MAPTILER_STYLE_ID =
 
 const SEASONS_SOURCE_ID = "country-seasons";
 const SEASONS_LAYER_ID = "seasons-fill";
-
-const VISA_COLORS: Record<string, string> = {
-  free: "#22c55e",
-  voa: "#3b82f6",
-  evisa: "#eab308",
-  embassy: "#ef4444",
-  restricted: "#ef4444",
-  unavailable: "#6b7280",
-  unknown: "#1e293b",
-};
-
-const SAFETY_COLORS: Record<string, string> = {
-  safe: "#22c55e",
-  unsafe: "#eab308",
-  dangerous: "#ef4444",
-};
 
 const UNKNOWN_COLOR = "#1e293b";
 
@@ -86,7 +75,7 @@ interface VisaMapProps {
   mapColorMode: MapColorMode;
   seasonMonth: number;
   activeSafetyLevels: Set<string>;
-  budgetTier: string | null;
+  activeAffordabilityBands: Set<AffordabilityBandKey>;
   activeSeasonTypes: Set<string>;
   /** Уникальные сезоны за выбранный месяц (с бэка или из фич) */
   seasonDistinctKeys: string[];
@@ -187,7 +176,7 @@ function applyVisaColorsWithCompositeFilters(
     const ok = passes(item.iso2);
     const show =
       ok && active.has(item.visa_category)
-        ? (VISA_COLORS[item.visa_category] ?? VISA_COLORS.unknown)
+        ? (MAP_VISA_FILL_COLORS[item.visa_category] ?? MAP_VISA_FILL_COLORS.unknown)
         : NEUTRAL_COUNTRIES_COLOR;
     const op = ok && active.has(item.visa_category) ? HIGH_FILL_OPACITY : DIM_FILL_OPACITY;
     colorExpression.push(item.iso2);
@@ -239,12 +228,11 @@ function applyAttributeColorsWithCompositeFilters(
 function applyTravelCostColors(
   mapInstance: maplibregl.Map,
   scores: Record<string, number>,
-  budgetTier: string | null,
   bands: TravelCostScoreBands,
   passes: (iso2: string) => boolean,
   enabled: boolean,
 ) {
-  if (!enabled || !budgetTier) {
+  if (!enabled) {
     mapInstance.setPaintProperty("countries-fill", "fill-opacity", 0);
     return;
   }
@@ -313,7 +301,7 @@ export default function VisaMap({
   mapColorMode,
   seasonMonth,
   activeSafetyLevels,
-  budgetTier,
+  activeAffordabilityBands,
   activeSeasonTypes,
   seasonDistinctKeys,
   onSeasonDistinctKeysLoaded,
@@ -332,7 +320,6 @@ export default function VisaMap({
   const mapColorModeRef = useRef(mapColorMode);
   const seasonMonthRef = useRef(seasonMonth);
   const activeSafetyLevelsRef = useRef(activeSafetyLevels);
-  const budgetTierRef = useRef(budgetTier);
   const activeSeasonTypesRef = useRef(activeSeasonTypes);
   const seasonDistinctKeysRef = useRef(seasonDistinctKeys);
   const seasonFetchGenRef = useRef(0);
@@ -354,6 +341,7 @@ export default function VisaMap({
   const onMatchingIso2sChangeRef = useRef(onMatchingIso2sChange);
   const travelCostScoresRef = useRef(travelCostScores);
   const travelCostScoreBandsRef = useRef(travelCostScoreBands);
+  const activeAffordabilityBandsRef = useRef(activeAffordabilityBands);
 
   const [popupCountry, setPopupCountry] = useState<CountryInfo | null>(null);
   const [popupVisa, setPopupVisa] = useState<VisaDetail | null>(null);
@@ -380,8 +368,8 @@ export default function VisaMap({
   }, [activeSafetyLevels]);
 
   useEffect(() => {
-    budgetTierRef.current = budgetTier;
-  }, [budgetTier]);
+    activeAffordabilityBandsRef.current = activeAffordabilityBands;
+  }, [activeAffordabilityBands]);
 
   useEffect(() => {
     activeSeasonTypesRef.current = activeSeasonTypes;
@@ -427,10 +415,20 @@ export default function VisaMap({
       if (safety && !activeSafetyLevelsRef.current.has(safety)) {
         return false;
       }
-      const budget = budgetTierRef.current;
-      if (budget) {
+      const affBands = activeAffordabilityBandsRef.current;
+      if (mapColorModeRef.current === "budget" && affBands.size === 0) {
+        return false;
+      }
+      if (affBands.size > 0) {
         const score = travelCostScoresRef.current[iso2];
         if (score == null) {
+          return false;
+        }
+        const bands =
+          travelCostScoreBandsRef.current ?? DEFAULT_TRAVEL_COST_SCORE_BANDS;
+        if (
+          !scoreMatchesActiveAffordabilityBands(score, bands, affBands)
+        ) {
           return false;
         }
       }
@@ -519,7 +517,7 @@ export default function VisaMap({
       applyAttributeColorsWithCompositeFilters(
         m,
         "safety_level",
-        SAFETY_COLORS,
+        MAP_SAFETY_FILL_COLORS,
         activeSafetyLevelsRef.current,
         countryAttrsRef.current,
         passesForNonSeasonLayers,
@@ -534,7 +532,6 @@ export default function VisaMap({
       applyTravelCostColors(
         m,
         travelCostScoresRef.current,
-        budgetTierRef.current,
         bands,
         passesForNonSeasonLayers,
         true,
@@ -674,7 +671,7 @@ export default function VisaMap({
     coloringEnabled,
     activeCategories,
     activeSafetyLevels,
-    budgetTier,
+    activeAffordabilityBands,
     activeSeasonTypes,
     seasonDistinctKeys,
     seasonMonth,
@@ -729,7 +726,7 @@ export default function VisaMap({
           type: "fill",
           source: "countries",
           paint: {
-            "fill-color": VISA_COLORS.unknown,
+            "fill-color": MAP_VISA_FILL_COLORS.unknown,
             "fill-opacity": 0.6,
           },
         });
@@ -793,10 +790,9 @@ export default function VisaMap({
           const response = await fetch(`${API_URL}/countries/${iso2}`);
           const country = await response.json();
           const visa = visaDataRef.current.find((v) => v.iso2 === iso2) ?? null;
-          const tier = budgetTierRef.current;
           const scores = travelCostScoresRef.current;
           const withCost =
-            tier && scores[isoUpper] != null
+            scores[isoUpper] != null
               ? { ...country, cost_score: scores[isoUpper] }
               : country;
           setPopupCountry(withCost);

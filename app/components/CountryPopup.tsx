@@ -5,6 +5,7 @@ import {
   travelCostLabelForScore,
   type TravelCostScoreBands,
 } from "../lib/travel-cost-score-bands";
+import type { AffordabilityBandKey } from "../types/map";
 
 interface VisaItem {
   id: string;
@@ -24,6 +25,7 @@ interface Country {
   capital: string;
   safety_level?: string | null;
   cost_score?: number | null;
+  exact_budget_band?: AffordabilityBandKey | null;
 }
 
 interface Props {
@@ -60,6 +62,13 @@ const SAFETY_LABELS: Record<string, string> = {
   dangerous: "Безопасность: высокий риск",
 };
 
+const EXACT_BUDGET_LABELS: Record<AffordabilityBandKey, string> = {
+  beyond_budget: "Точный бюджет: вне бюджета",
+  skimp: "Точный бюджет: придется экономить",
+  comfort: "Точный бюджет: комфортно",
+  carefree: "Точный бюджет: без забот",
+};
+
 function safetyLabel(level: string | null | undefined): string | null {
   if (!level) return null;
   return SAFETY_LABELS[level] ?? `Безопасность: ${level}`;
@@ -89,7 +98,9 @@ export default function CountryPopup({
 
   const bands = costScoreBands ?? DEFAULT_TRAVEL_COST_SCORE_BANDS;
   const safetyText = safetyLabel(country.safety_level);
-  const costText = costLabel(country.cost_score, bands);
+  const costText = country.exact_budget_band
+    ? EXACT_BUDGET_LABELS[country.exact_budget_band]
+    : costLabel(country.cost_score, bands);
 
   const offsetX = 16;
   const offsetY = 16;

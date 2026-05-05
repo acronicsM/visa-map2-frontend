@@ -11,14 +11,26 @@ import {
 import {
   ALL_AFFORDABILITY_BAND_KEYS,
   type AffordabilityBandKey,
+  type BudgetFilterMode,
+  type ExactBudgetData,
   type MapColorMode,
+  type TravelCurrencyListResponse,
+  type TravelFxRateResponse,
   type TravelSpendingTier,
 } from "../types/map";
 import type { MatchingCountryRow } from "../types/matching-country";
 import type { TravelCostScoreBands } from "../lib/travel-cost-score-bands";
+import {
+  budgetCurrencySelectionFromList,
+  DEFAULT_BUDGET_CURRENCY,
+  normalizeBudgetCurrency,
+} from "../lib/budget-currency";
+import { fetchJsonDeduped } from "../lib/json-fetch-dedupe";
+import { prefetchPassportBootstrap } from "../lib/passport-bootstrap-prefetch";
 import { getSeasonFilterRowPresentation } from "../lib/season-colors";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = API_URL.replace(/\/$/, "");
 
 /** Включить в `.env.local`: `NEXT_PUBLIC_DEBUG_TRAVEL_COST_SCORE_BANDS=true` — логи по `/travel-costs/score-bands`. */
 const DEBUG_TRAVEL_COST_SCORE_BANDS =
@@ -38,10 +50,48 @@ const ALL_VACATION_TYPES = new Set([
   "exotic",
 ]);
 
+const DEFAULT_EXACT_TRIP_DAYS = "10";
+
 interface CountryShortApi {
   iso2: string;
   name_ru?: string | null;
   flag_emoji?: string | null;
+}
+
+function toFiniteNumber(value: string): number | null {
+  const normalized = String(value).replace(/\s/g, "").replace(",", ".");
+  const n = Number(normalized);
+  return Number.isFinite(n) ? n : null;
+}
+
+function formatDefaultBudgetAmount(value: number): string {
+  if (!Number.isFinite(value)) return "";
+  return String(Math.round(value));
+}
+
+async function fetchUsdToCurrencyRate(currency: string): Promise<number | null> {
+  const code = normalizeBudgetCurrency(currency);
+  if (code === DEFAULT_BUDGET_CURRENCY) return 1;
+  const url = `${API_BASE}/travel-costs/fx-rate?currency=${encodeURIComponent(code)}`;
+  const res = await fetchJsonDeduped(url);
+  if (!res.ok || res.data == null || typeof res.data !== "object") return null;
+  const data = res.data as TravelFxRateResponse;
+  const rate = Number(data.rate);
+  return Number.isFinite(rate) && rate > 0 ? rate : null;
+}
+
+function exactAffordabilityBand(
+  dailyBudgetUsd: number,
+  costs: ExactBudgetData["daily_costs"][string],
+): AffordabilityBandKey | null {
+  const cheap = costs.cheap;
+  const normal = costs.normal;
+  const expensive = costs.expensive;
+  if (cheap == null || normal == null || expensive == null) return null;
+  if (dailyBudgetUsd < cheap) return "beyond_budget";
+  if (dailyBudgetUsd < normal) return "skimp";
+  if (dailyBudgetUsd < expensive) return "comfort";
+  return "carefree";
 }
 
 export function useHomeMapState() {
@@ -80,41 +130,62 @@ export function useHomeMapState() {
     Map<string, { name_ru: string; flag_emoji?: string | null }>
   >(() => new Map());
   const [travelCostScores, setTravelCostScores] = useState<Record<string, number>>({});
+  const [budgetFilterMode, setBudgetFilterMode] =
+    useState<BudgetFilterMode>("tier");
+  const [exactBudgetAmount, setExactBudgetAmountState] = useState("");
+  const [exactBudgetDays, setExactBudgetDays] = useState(DEFAULT_EXACT_TRIP_DAYS);
+  const [exactBudgetCurrency, setExactBudgetCurrency] = useState(
+    DEFAULT_BUDGET_CURRENCY,
+  );
+  const [availableBudgetCurrencies, setAvailableBudgetCurrencies] = useState<
+    string[]
+  >([DEFAULT_BUDGET_CURRENCY]);
+  const [usdToBudgetCurrencyRate, setUsdToBudgetCurrencyRate] = useState<
+    number | null
+  >(1);
+  const [exactBudgetData, setExactBudgetData] = useState<ExactBudgetData | null>(null);
   const [travelCostScoreBands, setTravelCostScoreBands] =
     useState<TravelCostScoreBands | null>(null);
   const [travelCostScoreBandsStatus, setTravelCostScoreBandsStatus] =
     useState<TravelCostScoreBandsStatus>("pending");
   const scoreBandsSlowLoggedRef = useRef(false);
+  /** Только последний ответ FX по `exactBudgetCurrency` (без гонки двух fetch). */
+  const fxRateFetchSeqRef = useRef(0);
+  /** Конвертация суммы после смены валюты (см. один `fetch` в useEffect). */
+  const pendingBudgetConversionRef = useRef<{
+    amount: number;
+    fromRate: number;
+  } | null>(null);
+  /** Пользователь очистил сумму — не подставлять снова доход из API (см. useEffect ниже). */
+  const suppressExactBudgetIncomeAutofillRef = useRef(false);
+
+  const setExactBudgetAmount = useCallback((value: string) => {
+    setExactBudgetAmountState(value);
+    suppressExactBudgetIncomeAutofillRef.current = value.trim() === "";
+  }, []);
 
   useDebugValue(travelCostScoreBandsStatus, (s) => `score-bands: ${s}`);
 
   const setMapColorMode = useCallback((mode: MapColorMode) => {
     setMapColorModeState(mode);
-  }, []);
-
-  /** При первом входе в режим «бюджет» включаем все полосы, если список пуст. Смена только полос без смены режима не трогает набор. */
-  const prevMapColorModeRef = useRef<MapColorMode>("citizenship");
-
-  useEffect(() => {
-    const prev = prevMapColorModeRef.current;
-    if (mapColorMode === "budget" && prev !== "budget") {
+    if (mode === "budget") {
       setActiveAffordabilityBands((bands) =>
         bands.size > 0 ? bands : new Set(ALL_AFFORDABILITY_BAND_KEYS),
       );
     }
-    prevMapColorModeRef.current = mapColorMode;
-  }, [mapColorMode]);
+  }, []);
 
   const seasonMonthRef = useRef(seasonMonth);
 
   useEffect(() => {
     let cancelled = false;
-    void fetch(`${API_URL}/countries`)
-      .then((r) => r.json())
-      .then((data: CountryShortApi[]) => {
-        if (cancelled || !Array.isArray(data)) return;
+    void fetchJsonDeduped(`${API_BASE}/countries`)
+      .then((res) => {
+        if (cancelled || !res.ok) return;
+        const data = res.data;
+        if (!Array.isArray(data)) return;
         const meta = new Map<string, { name_ru: string; flag_emoji?: string | null }>();
-        for (const row of data) {
+        for (const row of data as CountryShortApi[]) {
           const iso = String(row.iso2 ?? "").trim().toUpperCase();
           if (!iso) continue;
           const nameRu = String(row.name_ru ?? "").trim() || iso;
@@ -134,16 +205,14 @@ export function useHomeMapState() {
 
   useEffect(() => {
     let cancelled = false;
-    const url = `${API_URL}/travel-costs/score-bands`;
-    void fetch(url)
-      .then((r) => {
-        if (!r.ok) {
-          throw new Error(`HTTP ${r.status}`);
-        }
-        return r.json();
-      })
-      .then((data: TravelCostScoreBands) => {
+    const url = `${API_BASE}/travel-costs/score-bands`;
+    void fetchJsonDeduped(url)
+      .then((res) => {
         if (cancelled) return;
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        const data = res.data as TravelCostScoreBands;
         const okShape =
           data &&
           Array.isArray(data.thresholds) &&
@@ -153,7 +222,6 @@ export function useHomeMapState() {
           setTravelCostScoreBands(data);
           setTravelCostScoreBandsStatus("ok");
           if (DEBUG_TRAVEL_COST_SCORE_BANDS) {
-            // eslint-disable-next-line no-console
             console.info(
               "[travel-costs/score-bands] OK",
               {
@@ -167,7 +235,6 @@ export function useHomeMapState() {
           setTravelCostScoreBands(null);
           setTravelCostScoreBandsStatus("error");
           if (DEBUG_TRAVEL_COST_SCORE_BANDS) {
-            // eslint-disable-next-line no-console
             console.warn(
               "[travel-costs/score-bands] неверная форма ответа, пороги недоступны (fallback на клиенте)",
               data,
@@ -182,7 +249,6 @@ export function useHomeMapState() {
         setTravelCostScoreBandsStatus("error");
         if (DEBUG_TRAVEL_COST_SCORE_BANDS) {
           const msg = err instanceof Error ? err.message : String(err);
-          // eslint-disable-next-line no-console
           console.warn(
             "[travel-costs/score-bands] запрос не удался, пороги недоступны (fallback на клиенте):",
             msg,
@@ -205,11 +271,10 @@ export function useHomeMapState() {
         return;
       }
       scoreBandsSlowLoggedRef.current = true;
-      // eslint-disable-next-line no-console
       console.warn(
         "[travel-costs/score-bands] ответ ещё не пришёл (~1.5s): карта может кратко использовать клиентский DEFAULT. " +
           "Проверьте сеть и что API доступен по",
-        `${API_URL}/travel-costs/score-bands`,
+        `${API_BASE}/travel-costs/score-bands`,
       );
     }, 1500);
     return () => window.clearTimeout(t);
@@ -243,8 +308,19 @@ export function useHomeMapState() {
     setMatchingListReady(true);
   }, []);
 
+  const warmPassportCaches = useCallback((iso2: string) => {
+    prefetchPassportBootstrap(API_BASE, iso2, travelSpendingTier);
+  }, [travelSpendingTier]);
+
   const handlePassportChange = useCallback((iso2: string) => {
     setPassport(iso2);
+    suppressExactBudgetIncomeAutofillRef.current = false;
+    setExactBudgetAmountState("");
+    setExactBudgetDays(DEFAULT_EXACT_TRIP_DAYS);
+    setExactBudgetData(null);
+    pendingBudgetConversionRef.current = null;
+    setExactBudgetCurrency(DEFAULT_BUDGET_CURRENCY);
+    setUsdToBudgetCurrencyRate(1);
   }, []);
 
   useEffect(() => {
@@ -257,12 +333,17 @@ export function useHomeMapState() {
         cancelled = true;
       };
     }
-    void fetch(
-      `${API_URL}/travel-costs/${passport}?budget_tier=${travelSpendingTier}`,
-    )
-      .then((r) => r.json())
-      .then((data: { scores: Record<string, number> }) => {
-        if (!cancelled) setTravelCostScores(data.scores ?? {});
+    const isoUpper = passport.trim().toUpperCase();
+    const scoresUrl = `${API_BASE}/travel-costs/${encodeURIComponent(isoUpper)}?budget_tier=${travelSpendingTier}`;
+    void fetchJsonDeduped(scoresUrl)
+      .then((res) => {
+        if (cancelled) return;
+        if (!res.ok) {
+          setTravelCostScores({});
+          return;
+        }
+        const data = res.data as { scores?: Record<string, number> };
+        setTravelCostScores(data.scores ?? {});
       })
       .catch(() => {
         if (!cancelled) setTravelCostScores({});
@@ -271,6 +352,205 @@ export function useHomeMapState() {
       cancelled = true;
     };
   }, [passport, travelSpendingTier]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const currenciesUrl = passport.trim().length
+      ? `${API_BASE}/travel-costs/currencies?home_iso2=${encodeURIComponent(passport.trim().toUpperCase())}`
+      : `${API_BASE}/travel-costs/currencies`;
+    void fetchJsonDeduped(currenciesUrl)
+      .then((res) => {
+        if (cancelled) return;
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        const data = res.data as TravelCurrencyListResponse;
+        const { available, selectedDefault } = budgetCurrencySelectionFromList(data);
+        setAvailableBudgetCurrencies(available);
+        setUsdToBudgetCurrencyRate(
+          selectedDefault === DEFAULT_BUDGET_CURRENCY ? 1 : null,
+        );
+        setExactBudgetCurrency(selectedDefault);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setAvailableBudgetCurrencies([DEFAULT_BUDGET_CURRENCY]);
+        setUsdToBudgetCurrencyRate(1);
+        setExactBudgetCurrency(DEFAULT_BUDGET_CURRENCY);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [passport]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const iso = passport.trim();
+    if (!iso) {
+      queueMicrotask(() => {
+        if (!cancelled) setExactBudgetData(null);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const isoEncoded = encodeURIComponent(iso.toUpperCase());
+    void fetchJsonDeduped(`${API_BASE}/travel-costs/${isoEncoded}/exact-budget-data`)
+      .then((res) => {
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        const data = res.data as ExactBudgetData;
+        if (!cancelled) setExactBudgetData(data);
+      })
+      .catch(() => {
+        if (!cancelled) setExactBudgetData(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [passport]);
+
+  useEffect(() => {
+    const seq = ++fxRateFetchSeqRef.current;
+    let cancelled = false;
+    void fetchUsdToCurrencyRate(exactBudgetCurrency)
+      .then((rate) => {
+        if (cancelled || seq !== fxRateFetchSeqRef.current) return;
+        setUsdToBudgetCurrencyRate(rate);
+        const pending = pendingBudgetConversionRef.current;
+        if (
+          pending != null &&
+          rate != null &&
+          rate > 0 &&
+          pending.fromRate > 0
+        ) {
+          const amountUsd = pending.amount / pending.fromRate;
+          suppressExactBudgetIncomeAutofillRef.current = false;
+          setExactBudgetAmountState(formatDefaultBudgetAmount(amountUsd * rate));
+          pendingBudgetConversionRef.current = null;
+        }
+      })
+      .catch(() => {
+        if (cancelled || seq !== fxRateFetchSeqRef.current) return;
+        setUsdToBudgetCurrencyRate(null);
+        pendingBudgetConversionRef.current = null;
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [exactBudgetCurrency]);
+
+  const resetExactBudgetDefaults = useCallback(() => {
+    suppressExactBudgetIncomeAutofillRef.current = false;
+    setExactBudgetDays(DEFAULT_EXACT_TRIP_DAYS);
+    const incomeDailyUsd = exactBudgetData?.income_daily_usd;
+    const rate =
+      exactBudgetCurrency === DEFAULT_BUDGET_CURRENCY
+        ? 1
+        : usdToBudgetCurrencyRate;
+    setExactBudgetAmountState(
+      incomeDailyUsd == null || rate == null
+        ? ""
+        : formatDefaultBudgetAmount(
+            incomeDailyUsd * rate * Number(DEFAULT_EXACT_TRIP_DAYS),
+          ),
+    );
+  }, [exactBudgetCurrency, exactBudgetData, usdToBudgetCurrencyRate]);
+
+  const handleExactBudgetCurrencyChange = useCallback(
+    (currency: string) => {
+      const nextCurrency = normalizeBudgetCurrency(currency);
+      if (nextCurrency === exactBudgetCurrency) return;
+
+      const currentAmount = toFiniteNumber(exactBudgetAmount);
+      const currentRate =
+        exactBudgetCurrency === DEFAULT_BUDGET_CURRENCY
+          ? 1
+          : usdToBudgetCurrencyRate;
+
+      pendingBudgetConversionRef.current =
+        currentAmount != null &&
+        currentRate != null &&
+        currentRate > 0
+          ? { amount: currentAmount, fromRate: currentRate }
+          : null;
+
+      setUsdToBudgetCurrencyRate(
+        nextCurrency === DEFAULT_BUDGET_CURRENCY ? 1 : null,
+      );
+      setExactBudgetCurrency(nextCurrency);
+    },
+    [exactBudgetAmount, exactBudgetCurrency, usdToBudgetCurrencyRate],
+  );
+
+  const handleBudgetFilterModeChange = useCallback(
+    (mode: BudgetFilterMode) => {
+      setBudgetFilterMode(mode);
+      if (mode === "exact") {
+        setMapColorMode("budget");
+        setColoringEnabled(true);
+        setActiveAffordabilityBands((bands) =>
+          bands.size > 0 ? bands : new Set(ALL_AFFORDABILITY_BAND_KEYS),
+        );
+        if (!exactBudgetAmount.trim() || !exactBudgetDays.trim()) {
+          resetExactBudgetDefaults();
+        }
+      }
+    },
+    [exactBudgetAmount, exactBudgetDays, resetExactBudgetDefaults, setMapColorMode],
+  );
+
+  useEffect(() => {
+    if (budgetFilterMode !== "exact") return;
+    if (suppressExactBudgetIncomeAutofillRef.current) return;
+    if (exactBudgetAmount.trim() && exactBudgetDays.trim()) return;
+    queueMicrotask(resetExactBudgetDefaults);
+  }, [
+    budgetFilterMode,
+    exactBudgetAmount,
+    exactBudgetDays,
+    exactBudgetCurrency,
+    availableBudgetCurrencies,
+    usdToBudgetCurrencyRate,
+    exactBudgetData,
+    resetExactBudgetDefaults,
+  ]);
+
+  const exactBudgetDailyLocal = useMemo(() => {
+    const amount = toFiniteNumber(exactBudgetAmount);
+    const days = toFiniteNumber(exactBudgetDays);
+    if (amount == null || days == null || amount < 0 || days < 1) return null;
+    return amount / days;
+  }, [exactBudgetAmount, exactBudgetDays]);
+
+  const exactBudgetDailyUsd = useMemo(() => {
+    if (exactBudgetDailyLocal == null || !exactBudgetData) return null;
+    const rate =
+      exactBudgetCurrency === DEFAULT_BUDGET_CURRENCY
+        ? 1
+        : usdToBudgetCurrencyRate;
+    if (rate == null || rate <= 0) return null;
+    return exactBudgetDailyLocal / rate;
+  }, [
+    exactBudgetCurrency,
+    exactBudgetDailyLocal,
+    exactBudgetData,
+    usdToBudgetCurrencyRate,
+  ]);
+
+  const exactBudgetAffordabilityBands = useMemo(() => {
+    if (exactBudgetDailyUsd == null || !exactBudgetData) {
+      return {} as Record<string, AffordabilityBandKey>;
+    }
+    const out: Record<string, AffordabilityBandKey> = {};
+    for (const [iso2, costs] of Object.entries(exactBudgetData.daily_costs ?? {})) {
+      const band = exactAffordabilityBand(exactBudgetDailyUsd, costs);
+      if (band) out[iso2.toUpperCase()] = band;
+    }
+    return out;
+  }, [exactBudgetDailyUsd, exactBudgetData]);
 
   const handleToggleCategory = useCallback((key: string) => {
     setActiveCategories((prev) => {
@@ -359,18 +639,34 @@ export function useHomeMapState() {
     matchingListReady,
     countryMetaByIso,
     travelCostScores,
+    budgetFilterMode,
+    exactBudgetAmount,
+    exactBudgetDays,
+    exactBudgetCurrency,
+    availableBudgetCurrencies,
+    usdToBudgetCurrencyRate,
+    exactBudgetData,
+    exactBudgetDailyLocal,
+    exactBudgetDailyUsd,
+    exactBudgetAffordabilityBands,
     travelCostScoreBands,
     travelCostScoreBandsStatus,
     seasonFilterRows,
     setSidebarOpen,
     setMapColorMode,
     handlePassportChange,
+    warmPassportCaches,
     handleSeasonMonthChange,
     onSeasonDistinctKeysLoaded,
     handleMatchingIso2sChange,
     handleToggleCategory,
     handleToggleSafetyLevel,
     handleTravelSpendingTierChange,
+    handleBudgetFilterModeChange,
+    setExactBudgetAmount,
+    setExactBudgetDays,
+    handleExactBudgetCurrencyChange,
+    resetExactBudgetDefaults,
     handleToggleAffordabilityBand,
     handleToggleSeasonType,
     handleToggleVacationType,

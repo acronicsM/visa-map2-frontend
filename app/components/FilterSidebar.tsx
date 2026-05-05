@@ -1,10 +1,10 @@
 "use client";
 
-import { Fragment, useId, useRef, useState } from "react";
-import PassportSelect from "./PassportSelect";
+import { Fragment, useId, useLayoutEffect, useRef, useState } from "react";
 import DepartureCityMultiSelect from "./departure-city-multi-select";
 import type {
   AffordabilityBandKey,
+  BudgetFilterMode,
   MapColorMode,
   TravelSpendingTier,
 } from "../types/map";
@@ -12,7 +12,6 @@ import {
   affordabilityBandSidebarColor,
   type TravelCostScoreBands,
 } from "../lib/travel-cost-score-bands";
-import { currencyForPassportCountry } from "../lib/country-currency";
 import {
   MAP_SAFETY_FILL_COLORS,
   MAP_VISA_FILL_COLORS,
@@ -53,7 +52,7 @@ export const STUB_DEPARTURE_CITIES = [
 ];
 
 const FILTER_GROUPS = [
-  { key: "citizenship" as const, label: "Гражданство" },
+  { key: "citizenship" as const, label: "Визовые режимы" },
   { key: "safety" as const, label: "Безопасность" },
   { key: "budget" as const, label: "Стоимость путешествия" },
   { key: "season" as const, label: "Сезонность" },
@@ -202,139 +201,288 @@ function TravelSpendingRail({
   );
 }
 
-function BudgetLinkChevron({ open }: { open: boolean }) {
-  return (
-    <svg
-      className={`h-3 w-3 shrink-0 text-primary transition-transform duration-300 ease-out ${
-        open ? "rotate-180" : ""
-      }`}
-      viewBox="0 0 20 20"
-      fill="currentColor"
-      aria-hidden
-    >
-      <path
-        fillRule="evenodd"
-        d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.24 4.5a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z"
-        clipRule="evenodd"
-      />
-    </svg>
-  );
+function formatMoney(value: number | null | undefined, currency?: string | null): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  const rounded = Math.round(value);
+  return `${new Intl.NumberFormat("ru-RU").format(rounded)}${currency ? ` ${currency}` : ""}`;
 }
 
-/** Переключатель «уровни бюджета» (рельса) и числовые поля; ссылка с кавычками и стрелкой вниз. */
+/** Целая сумма бюджета без дробной части: только цифры для состояния (пробелы из вставки отбрасываются). */
+function budgetAmountIntegerDigits(raw: string): string {
+  const trimmed = raw.trim().replace(/\s/g, "");
+  const head = trimmed.split(/[.,]/)[0] ?? "";
+  return head.replace(/\D/g, "");
+}
+
+function formatBudgetAmountGroupedRu(digits: string): string {
+  if (!digits) return "";
+  const n = Number(digits);
+  if (!Number.isFinite(n)) return digits;
+  return new Intl.NumberFormat("ru-RU", {
+    maximumFractionDigits: 0,
+    useGrouping: true,
+  }).format(n);
+}
+
+/** Сколько десятичных цифр находится в строке слева от позиции каретки. */
+function countDigitsBeforeCaret(raw: string, caretIndex: number): number {
+  let n = 0;
+  const limit = Math.min(Math.max(caretIndex, 0), raw.length);
+  for (let i = 0; i < limit; i++) {
+    const ch = raw.charCodeAt(i);
+    if (ch >= 48 && ch <= 57) n++;
+  }
+  return n;
+}
+
+/** Позиция каретки после `digitsBeforeCaret`-й цифры в отформатированной строке. */
+function caretAfterDigitPrefix(formatted: string, digitsBeforeCaret: number): number {
+  if (digitsBeforeCaret <= 0) return 0;
+  let counted = 0;
+  for (let i = 0; i < formatted.length; i++) {
+    const ch = formatted.charCodeAt(i);
+    if (ch >= 48 && ch <= 57) {
+      counted++;
+      if (counted === digitsBeforeCaret) return i + 1;
+    }
+  }
+  return formatted.length;
+}
+
+/** Переключатель «уровни бюджета» (рельса) и числовые поля; ссылка «Уточнить бюджет». */
 function BudgetSpendingSection({
   value,
   onChange,
-  passportIso2,
+  budgetFilterMode,
+  onBudgetFilterModeChange,
+  exactBudgetAmount,
+  onExactBudgetAmountChange,
+  exactBudgetDays,
+  onExactBudgetDaysChange,
+  exactBudgetCurrency,
+  availableBudgetCurrencies,
+  onExactBudgetCurrencyChange,
+  exactBudgetDailyLocal,
+  exactBudgetDailyUsd,
 }: {
   value: TravelSpendingTier;
   onChange: (tier: TravelSpendingTier) => void;
-  passportIso2: string;
+  budgetFilterMode: BudgetFilterMode;
+  onBudgetFilterModeChange: (mode: BudgetFilterMode) => void;
+  exactBudgetAmount: string;
+  onExactBudgetAmountChange: (amount: string) => void;
+  exactBudgetDays: string;
+  onExactBudgetDaysChange: (days: string) => void;
+  exactBudgetCurrency: string;
+  availableBudgetCurrencies: string[];
+  onExactBudgetCurrencyChange: (currency: string) => void;
+  exactBudgetDailyLocal: number | null;
+  exactBudgetDailyUsd: number | null;
 }) {
   const fieldsetId = useId();
   const toggleId = `${fieldsetId}-toggle`;
   const panelId = `${fieldsetId}-numeric`;
-  const [numericOpen, setNumericOpen] = useState(false);
-  const [budgetAmount, setBudgetAmount] = useState("");
-  const [tripDays, setTripDays] = useState("");
-  const homeCurrency = currencyForPassportCountry(passportIso2);
+  const numericOpen = budgetFilterMode === "exact";
+  const budgetCurrency = exactBudgetCurrency || "USD";
+  const budgetInputRef = useRef<HTMLInputElement>(null);
+  /** После обновления суммы — восстановить каретку по числу цифр слева (см. useLayoutEffect). */
+  const pendingBudgetCaretDigitsBeforeRef = useRef<number | null>(null);
+  /** Если цифры не изменились, а в поле попали посторонние символы — форсируем перерисовку. */
+  const [budgetAmountFormatBump, setBudgetAmountFormatBump] = useState(0);
+
+  const tierSlideRef = useRef<HTMLDivElement>(null);
+  const numericSlideRef = useRef<HTMLDivElement>(null);
+  const [tierPanelHeight, setTierPanelHeight] = useState(0);
+  const [numericPanelHeight, setNumericPanelHeight] = useState(0);
+
+  useLayoutEffect(() => {
+    const tierEl = tierSlideRef.current;
+    const numEl = numericSlideRef.current;
+    if (!tierEl || !numEl) return;
+
+    function measure() {
+      const t = tierSlideRef.current;
+      const n = numericSlideRef.current;
+      if (!t || !n) return;
+      const th = t.scrollHeight;
+      const nh = n.scrollHeight;
+      if (th > 0) setTierPanelHeight(Math.ceil(th));
+      if (nh > 0) setNumericPanelHeight(Math.ceil(nh));
+    }
+
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(tierEl);
+    ro.observe(numEl);
+    return () => ro.disconnect();
+  }, []);
+
+  const slideReady = tierPanelHeight > 0 && numericPanelHeight > 0;
+
+  const budgetDigits = budgetAmountIntegerDigits(exactBudgetAmount);
+  const budgetAmountShown =
+    budgetDigits === "" ? "" : formatBudgetAmountGroupedRu(budgetDigits);
+
+  useLayoutEffect(() => {
+    const pending = pendingBudgetCaretDigitsBeforeRef.current;
+    const el = budgetInputRef.current;
+    pendingBudgetCaretDigitsBeforeRef.current = null;
+    if (pending == null || el == null || document.activeElement !== el) return;
+    const pos = caretAfterDigitPrefix(budgetAmountShown, pending);
+    el.setSelectionRange(pos, pos);
+  }, [budgetAmountShown, budgetAmountFormatBump]);
+
+  function toggleNumericMode() {
+    onBudgetFilterModeChange(numericOpen ? "tier" : "exact");
+  }
 
   return (
     <div className="flex flex-col gap-2 min-h-0">
       <div
-        className={`grid transition-[grid-template-rows] duration-300 ease-out ${
-          numericOpen ? "grid-rows-[0fr]" : "grid-rows-[1fr]"
-        }`}
+        className="overflow-hidden transition-[max-height] duration-[520ms] ease-[cubic-bezier(0.22,1,0.36,1)]"
+        style={{
+          maxHeight:
+            slideReady && numericOpen
+              ? 0
+              : slideReady
+                ? tierPanelHeight
+                : undefined,
+        }}
       >
         <div
-          className={`min-h-0 overflow-hidden ${
-            numericOpen ? "pointer-events-none" : ""
+          ref={tierSlideRef}
+          className={`flex flex-col gap-2 transition-[opacity,transform] duration-[520ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${
+            numericOpen ? "-translate-y-1 opacity-0 pointer-events-none" : "translate-y-0 opacity-100"
           }`}
         >
-          <div className="flex flex-col gap-2">
-            <span className="block text-[13px] font-medium text-on-surface">
-              Ваш бюджет на путешествие
-            </span>
-            <TravelSpendingRail value={value} onChange={onChange} />
-          </div>
+          <span className="block text-[13px] font-medium text-on-surface">
+            Ощущения бюджета
+          </span>
+          <TravelSpendingRail value={value} onChange={onChange} />
         </div>
       </div>
 
       <button
         type="button"
-        onClick={() => setNumericOpen((o) => !o)}
-        className="flex w-full items-center justify-center gap-1 py-0.5 text-[13px] font-medium text-primary underline-offset-2 hover:underline focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface-container"
+        onClick={toggleNumericMode}
+        className="flex w-full items-center justify-center py-0.5 text-[13px] font-medium text-primary underline-offset-2 hover:underline focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface-container"
         aria-expanded={numericOpen}
         aria-controls={panelId}
         id={toggleId}
       >
-        <span className="font-serif text-[14px] leading-none text-primary/75" aria-hidden>
-          «
-        </span>
         <span className="min-w-0">
           {numericOpen ? "Ощущения бюджета" : "Уточнить бюджет"}
         </span>
-        <span className="font-serif text-[14px] leading-none text-primary/75" aria-hidden>
-          »
-        </span>
-        <BudgetLinkChevron open={numericOpen} />
       </button>
 
       <div
-        className={`grid transition-[grid-template-rows] duration-300 ease-out ${
-          numericOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
-        }`}
+        className="overflow-hidden transition-[max-height] duration-[520ms] ease-[cubic-bezier(0.22,1,0.36,1)]"
+        style={{
+          maxHeight:
+            slideReady && numericOpen
+              ? numericPanelHeight
+              : slideReady
+                ? 0
+                : numericOpen
+                  ? undefined
+                  : 0,
+        }}
       >
-        <div className="min-h-0 overflow-hidden">
+        <div
+          ref={numericSlideRef}
+          className={`transition-[opacity,transform] duration-[520ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${
+            numericOpen ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0 pointer-events-none"
+          }`}
+        >
           <div
             id={panelId}
             role="region"
-            aria-labelledby={toggleId}
-            className="flex flex-col gap-3 border-t border-outline-variant/50 pt-3"
+            aria-label="Калькулятор бюджета"
+            className="flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-xl border border-outline-variant/70 bg-white/70 p-3 shadow-sm"
           >
-            <label className="flex flex-col gap-1">
-              <span className="text-[12px] font-medium text-on-surface-variant">
-                Бюджет
-              </span>
-              <div className="flex min-w-0 items-center gap-2">
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  min={0}
-                  step="any"
-                  className="min-w-0 flex-1 rounded-md border border-outline-variant bg-white px-2.5 py-2 text-[14px] text-on-surface outline-none transition-shadow focus-visible:ring-2 focus-visible:ring-primary"
-                  value={budgetAmount}
-                  onChange={(e) => setBudgetAmount(e.target.value)}
-                  placeholder="Сумма"
-                  aria-describedby={
-                    homeCurrency ? `${panelId}-budget-currency` : undefined
+            <div className="flex min-w-0 flex-1 basis-[min(100%,10rem)] items-center gap-2">
+              <input
+                ref={budgetInputRef}
+                type="text"
+                inputMode="numeric"
+                autoComplete="off"
+                className="min-w-16 flex-1 rounded-md border border-outline-variant bg-white px-2.5 py-2 text-[14px] text-on-surface outline-none transition-shadow focus-visible:ring-2 focus-visible:ring-primary"
+                value={budgetAmountShown}
+                onChange={(e) => {
+                  const el = e.target;
+                  const caret = el.selectionStart ?? 0;
+                  const digitsBefore = countDigitsBeforeCaret(el.value, caret);
+                  const newDigits = budgetAmountIntegerDigits(el.value);
+                  pendingBudgetCaretDigitsBeforeRef.current = digitsBefore;
+                  if (newDigits !== budgetDigits) {
+                    onExactBudgetAmountChange(newDigits);
+                  } else {
+                    setBudgetAmountFormatBump((b) => b + 1);
                   }
-                />
-                {homeCurrency ? (
-                  <span
-                    id={`${panelId}-budget-currency`}
-                    className="shrink-0 tabular-nums text-[13px] font-medium text-on-surface-variant"
-                  >
-                    {homeCurrency}
-                  </span>
-                ) : null}
-              </div>
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-[12px] font-medium text-on-surface-variant">
-                Дней путешествия
+                }}
+                placeholder="Сумма"
+                aria-label="Сумма бюджета на всю поездку"
+                aria-describedby={`${panelId}-budget-currency`}
+              />
+              <select
+                id={`${panelId}-budget-currency`}
+                value={budgetCurrency}
+                onChange={(e) => onExactBudgetCurrencyChange(e.target.value)}
+                className="max-w-[84px] shrink-0 rounded-md border border-outline-variant bg-white px-2 py-2 text-[13px] font-medium text-on-surface outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                aria-label="Валюта бюджета"
+              >
+                {availableBudgetCurrencies.map((currency) => (
+                  <option key={currency} value={currency}>
+                    {currency}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <span className="whitespace-nowrap text-[12px] font-medium text-on-surface-variant">
+                за
               </span>
               <input
                 type="number"
                 inputMode="numeric"
                 min={1}
                 step={1}
-                className="rounded-md border border-outline-variant bg-white px-2.5 py-2 text-[14px] text-on-surface outline-none transition-shadow focus-visible:ring-2 focus-visible:ring-primary"
-                value={tripDays}
-                onChange={(e) => setTripDays(e.target.value)}
-                placeholder="Например, 7"
+                className="w-13 shrink-0 rounded-md border border-outline-variant bg-white px-1.5 py-2 text-center text-[14px] tabular-nums text-on-surface outline-none transition-shadow focus-visible:ring-2 focus-visible:ring-primary"
+                value={exactBudgetDays}
+                onChange={(e) => onExactBudgetDaysChange(e.target.value)}
+                placeholder="—"
+                aria-label="Количество дней поездки"
               />
-            </label>
+              <span className="whitespace-nowrap text-[12px] font-medium text-on-surface-variant">
+                дн
+              </span>
+            </div>
+            <div
+              className="basis-full rounded-lg bg-surface-container px-3 py-2 text-[12px] leading-snug text-on-surface-variant"
+              aria-live="polite"
+            >
+              {exactBudgetDailyLocal == null || exactBudgetDailyUsd == null ? (
+                <span>
+                  Укажите положительную сумму и минимум 1 день, чтобы включить точный
+                  расчет.
+                </span>
+              ) : (
+                <span>
+                  В день:{" "}
+                  <strong className="text-on-surface">
+                    {formatMoney(exactBudgetDailyUsd, "USD")}
+                  </strong>
+                  {budgetCurrency !== "USD" ? (
+                    <>
+                      {" "}
+                      <span>
+                        ≈ {formatMoney(exactBudgetDailyLocal, budgetCurrency)}
+                      </span>
+                    </>
+                  ) : null}
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -351,6 +499,17 @@ interface FilterSidebarProps {
   onToggleSafetyLevel: (key: string) => void;
   travelSpendingTier: TravelSpendingTier;
   onTravelSpendingTierChange: (tier: TravelSpendingTier) => void;
+  budgetFilterMode: BudgetFilterMode;
+  onBudgetFilterModeChange: (mode: BudgetFilterMode) => void;
+  exactBudgetAmount: string;
+  onExactBudgetAmountChange: (amount: string) => void;
+  exactBudgetDays: string;
+  onExactBudgetDaysChange: (days: string) => void;
+  exactBudgetCurrency: string;
+  availableBudgetCurrencies: string[];
+  onExactBudgetCurrencyChange: (currency: string) => void;
+  exactBudgetDailyLocal: number | null;
+  exactBudgetDailyUsd: number | null;
   activeAffordabilityBands: Set<AffordabilityBandKey>;
   onToggleAffordabilityBand: (key: AffordabilityBandKey) => void;
   mapColorMode: MapColorMode;
@@ -440,6 +599,17 @@ export default function FilterSidebar({
   onToggleSafetyLevel,
   travelSpendingTier,
   onTravelSpendingTierChange,
+  budgetFilterMode,
+  onBudgetFilterModeChange,
+  exactBudgetAmount,
+  onExactBudgetAmountChange,
+  exactBudgetDays,
+  onExactBudgetDaysChange,
+  exactBudgetCurrency,
+  availableBudgetCurrencies,
+  onExactBudgetCurrencyChange,
+  exactBudgetDailyLocal,
+  exactBudgetDailyUsd,
   activeAffordabilityBands,
   onToggleAffordabilityBand,
   mapColorMode,
@@ -510,12 +680,16 @@ export default function FilterSidebar({
     >
       {(isOpen || isDrawerEmbed) && (
         <div
-          className="flex h-full flex-col overflow-y-auto"
+          className={
+            isDrawerEmbed
+              ? "flex h-full flex-col overflow-y-auto"
+              : "flex h-full flex-col overflow-y-auto px-4"
+          }
           style={isDrawerEmbed ? { minWidth: 0, width: "100%" } : { minWidth: "280px" }}
         >
 
           {!isDrawerEmbed && (
-            <div className="flex items-center justify-between px-5 pt-5 pb-3">
+            <div className="flex items-center justify-between pt-5 pb-3">
               <span
                 className="text-xs font-semibold tracking-widest text-outline"
                 style={{ letterSpacing: "0.12em" }}
@@ -536,11 +710,16 @@ export default function FilterSidebar({
             </div>
           )}
 
-
-
-
-          <div className="flex flex-col mx-3">
-            {FILTER_GROUPS.map(({ key, label }, idx) => {
+          {!passport ? (
+            <div className="flex flex-col flex-1 justify-center items-center py-10 text-center">
+              <span className="text-sm text-outline mb-2">
+                Для установки фильтров выберите страну своего гражданства
+              </span>
+            </div>
+          ) : (
+            <>
+              <div className="flex flex-col">
+                {FILTER_GROUPS.map(({ key, label }, idx) => {
               const isColorActive = mapColorMode === key && coloringEnabled;
               const isSectionOpen = openSections.has(key);
 
@@ -578,15 +757,6 @@ export default function FilterSidebar({
 
                   {isSectionOpen && key === "citizenship" && (
                     <div>
-                      {!hidePassportInPanel && (
-                        <div className="px-3 pb-3">
-                          <span className="mb-2 block text-[13px] text-outline">
-                            Ваш паспорт
-                          </span>
-                          <PassportSelect value={passport} onChange={onPassportChange} />
-                        </div>
-                      )}
-
                       <div className="mx-[2px] flex flex-col justify-end gap-1 px-3 pb-4">
                         {SIDEBAR_VISA_FILTER_ROWS.map(({ key: catKey, label: catLabel }) => (
                           <div key={catKey} className="flex items-center justify-between">
@@ -642,7 +812,17 @@ export default function FilterSidebar({
                       <BudgetSpendingSection
                         value={travelSpendingTier}
                         onChange={onTravelSpendingTierChange}
-                        passportIso2={passport}
+                        budgetFilterMode={budgetFilterMode}
+                        onBudgetFilterModeChange={onBudgetFilterModeChange}
+                        exactBudgetAmount={exactBudgetAmount}
+                        onExactBudgetAmountChange={onExactBudgetAmountChange}
+                        exactBudgetDays={exactBudgetDays}
+                        onExactBudgetDaysChange={onExactBudgetDaysChange}
+                        exactBudgetCurrency={exactBudgetCurrency}
+                        availableBudgetCurrencies={availableBudgetCurrencies}
+                        onExactBudgetCurrencyChange={onExactBudgetCurrencyChange}
+                        exactBudgetDailyLocal={exactBudgetDailyLocal}
+                        exactBudgetDailyUsd={exactBudgetDailyUsd}
                       />
                       <div className="flex flex-col gap-1">
                         {AFFORDABILITY_OPTIONS.map(({ key: bKey, label: bLabel }) => (
@@ -758,9 +938,11 @@ export default function FilterSidebar({
                 </div>
               );
             })}
-          </div>
+              </div>
 
-          <div className="flex-1" />
+              <div className="flex-1" />
+            </>
+          )}
         </div>
       )}
     </div>

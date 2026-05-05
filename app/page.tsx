@@ -27,6 +27,17 @@ export default function Home() {
           onToggleSafetyLevel={s.handleToggleSafetyLevel}
           travelSpendingTier={s.travelSpendingTier}
           onTravelSpendingTierChange={s.handleTravelSpendingTierChange}
+          budgetFilterMode={s.budgetFilterMode}
+          onBudgetFilterModeChange={s.handleBudgetFilterModeChange}
+          exactBudgetAmount={s.exactBudgetAmount}
+          onExactBudgetAmountChange={s.setExactBudgetAmount}
+          exactBudgetDays={s.exactBudgetDays}
+          onExactBudgetDaysChange={s.setExactBudgetDays}
+          exactBudgetCurrency={s.exactBudgetCurrency}
+          availableBudgetCurrencies={s.availableBudgetCurrencies}
+          onExactBudgetCurrencyChange={s.handleExactBudgetCurrencyChange}
+          exactBudgetDailyLocal={s.exactBudgetDailyLocal}
+          exactBudgetDailyUsd={s.exactBudgetDailyUsd}
           activeAffordabilityBands={s.activeAffordabilityBands}
           onToggleAffordabilityBand={s.handleToggleAffordabilityBand}
           mapColorMode={s.mapColorMode}
@@ -78,6 +89,8 @@ export default function Home() {
             coloringEnabled={s.coloringEnabled}
             onMatchingIso2sChange={s.handleMatchingIso2sChange}
             travelCostScores={s.travelCostScores}
+            budgetFilterMode={s.budgetFilterMode}
+            exactBudgetAffordabilityBands={s.exactBudgetAffordabilityBands}
             travelCostScoreBands={s.travelCostScoreBands}
           />
           <div className="pointer-events-none absolute inset-x-0 top-3 z-40 flex justify-center px-3 sm:top-4">
@@ -85,6 +98,7 @@ export default function Home() {
               className="pointer-events-auto w-full max-w-md"
               value={s.passport}
               onChange={s.handlePassportChange}
+              onWarmPassportCaches={s.warmPassportCaches}
             />
           </div>
         </div>

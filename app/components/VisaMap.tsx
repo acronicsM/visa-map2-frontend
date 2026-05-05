@@ -17,14 +17,20 @@ import {
   travelCostColorForScore,
   type TravelCostScoreBands,
 } from "../lib/travel-cost-score-bands";
+import { fetchJsonDeduped } from "../lib/json-fetch-dedupe";
 import {
   MAP_SAFETY_FILL_COLORS,
   MAP_VISA_FILL_COLORS,
 } from "../lib/map-fill-palettes";
-import type { AffordabilityBandKey, MapColorMode } from "../types/map";
+import type {
+  AffordabilityBandKey,
+  BudgetFilterMode,
+  MapColorMode,
+} from "../types/map";
 import type { MatchingCountryRow } from "../types/matching-country";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = API_URL.replace(/\/$/, "");
 const MAPTILER_KEY = process.env.NEXT_PUBLIC_MAPTILER_KEY || "";
 /** ID стиля MapTiler (см. каталог https://cloud.maptiler.com/maps/); `azure` в API нет — 404. */
 const MAPTILER_STYLE_ID =
@@ -63,6 +69,7 @@ interface CountryInfo {
   capital: string;
   safety_level?: string | null;
   cost_score?: number | null;
+  exact_budget_band?: AffordabilityBandKey | null;
 }
 
 interface CountryAttrs {
@@ -85,6 +92,8 @@ interface VisaMapProps {
   onMatchingIso2sChange?: (rows: MatchingCountryRow[]) => void;
   /** home_iso2 x dest_iso2 -> score из GET /travel-costs/{home_iso2} */
   travelCostScores: Record<string, number>;
+  budgetFilterMode: BudgetFilterMode;
+  exactBudgetAffordabilityBands: Record<string, AffordabilityBandKey>;
   /** Пороги/подписи/цвета из GET /travel-costs/score-bands */
   travelCostScoreBands: TravelCostScoreBands | null;
 }
@@ -263,6 +272,46 @@ function applyTravelCostColors(
   mapInstance.setPaintProperty("countries-fill", "fill-opacity", opacityExpression);
 }
 
+function applyExactBudgetColors(
+  mapInstance: maplibregl.Map,
+  exactBands: Record<string, AffordabilityBandKey>,
+  bands: TravelCostScoreBands,
+  passes: (iso2: string) => boolean,
+  enabled: boolean,
+) {
+  if (!enabled) {
+    mapInstance.setPaintProperty("countries-fill", "fill-opacity", 0);
+    return;
+  }
+  const isoKeys = Object.keys(exactBands);
+  if (isoKeys.length === 0) {
+    mapInstance.setPaintProperty("countries-fill", "fill-color", NEUTRAL_COUNTRIES_COLOR);
+    mapInstance.setPaintProperty("countries-fill", "fill-opacity", DIM_FILL_OPACITY);
+    return;
+  }
+  const colorExpression: unknown[] = ["match", ["get", "iso2"]];
+  const opacityExpression: unknown[] = ["match", ["get", "iso2"]];
+
+  for (const iso2 of isoKeys) {
+    const band = exactBands[iso2];
+    const scoreBandIndex = {
+      carefree: 0,
+      comfort: 1,
+      skimp: 2,
+      beyond_budget: 3,
+    }[band];
+    const ok = passes(iso2);
+    const col = bands.colors[scoreBandIndex] ?? UNKNOWN_COLOR;
+    colorExpression.push(iso2, ok ? col : NEUTRAL_COUNTRIES_COLOR);
+    opacityExpression.push(iso2, ok ? HIGH_FILL_OPACITY : DIM_FILL_OPACITY);
+  }
+  colorExpression.push(NEUTRAL_COUNTRIES_COLOR);
+  opacityExpression.push(DIM_FILL_OPACITY);
+
+  mapInstance.setPaintProperty("countries-fill", "fill-color", colorExpression);
+  mapInstance.setPaintProperty("countries-fill", "fill-opacity", opacityExpression);
+}
+
 function setSeasonLayerVisibility(mapInstance: maplibregl.Map, visible: boolean) {
   if (!mapInstance.getLayer(SEASONS_LAYER_ID)) return;
   mapInstance.setLayoutProperty(
@@ -308,6 +357,8 @@ export default function VisaMap({
   coloringEnabled,
   onMatchingIso2sChange,
   travelCostScores,
+  budgetFilterMode,
+  exactBudgetAffordabilityBands,
   travelCostScoreBands,
 }: VisaMapProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
@@ -326,6 +377,8 @@ export default function VisaMap({
   /** Совпадает с последним gen, для которого применили ответ geodata (или осознанно пустой). */
   const seasonDataAppliedGenRef = useRef(0);
   const passportRef = useRef(passport);
+  /** Игнорируем устаревший ответ `fetch` при быстрой смене паспорта. */
+  const visaMapFetchGenRef = useRef(0);
   const loadVisaMapRef = useRef<(iso: string) => Promise<void>>(async () => {});
   const refreshMapPaintRef = useRef<() => void>(() => {});
   const countryAttrsRef = useRef<Map<string, CountryAttrs>>(new Map());
@@ -340,6 +393,8 @@ export default function VisaMap({
 
   const onMatchingIso2sChangeRef = useRef(onMatchingIso2sChange);
   const travelCostScoresRef = useRef(travelCostScores);
+  const budgetFilterModeRef = useRef(budgetFilterMode);
+  const exactBudgetAffordabilityBandsRef = useRef(exactBudgetAffordabilityBands);
   const travelCostScoreBandsRef = useRef(travelCostScoreBands);
   const activeAffordabilityBandsRef = useRef(activeAffordabilityBands);
 
@@ -394,6 +449,14 @@ export default function VisaMap({
   }, [travelCostScores]);
 
   useEffect(() => {
+    budgetFilterModeRef.current = budgetFilterMode;
+  }, [budgetFilterMode]);
+
+  useEffect(() => {
+    exactBudgetAffordabilityBandsRef.current = exactBudgetAffordabilityBands;
+  }, [exactBudgetAffordabilityBands]);
+
+  useEffect(() => {
     travelCostScoreBandsRef.current = travelCostScoreBands;
   }, [travelCostScoreBands]);
 
@@ -401,15 +464,34 @@ export default function VisaMap({
     const m = map.current;
     if (!m || !mapLoadedRef.current) return;
 
+    const homeIso = String(passportRef.current ?? "").trim();
+    if (!homeIso) {
+      if (m.getLayer("countries-fill")) {
+        m.setPaintProperty("countries-fill", "fill-opacity", 0);
+      }
+      setSeasonLayerVisibility(m, false);
+      onMatchingIso2sChangeRef.current?.([]);
+      return;
+    }
+
+    if (!Array.isArray(visaDataRef.current)) {
+      visaDataRef.current = [];
+    }
+
     const mode = mapColorModeRef.current;
     const enabled = coloringEnabledRef.current;
 
     const passesComposite = (iso2: string, seasonKeyForFilter: string): boolean => {
-      const visa = visaDataRef.current.find((v) => v.iso2 === iso2);
+      const isoUpper = String(iso2 ?? "").trim().toUpperCase();
+      const visa = visaDataRef.current.find(
+        (v) => String(v.iso2 ?? "").trim().toUpperCase() === isoUpper,
+      );
       if (!visa || !activeCategoriesRef.current.has(visa.visa_category)) {
         return false;
       }
-      const attrs = countryAttrsRef.current.get(iso2);
+      const attrs =
+        countryAttrsRef.current.get(isoUpper) ??
+        countryAttrsRef.current.get(String(iso2 ?? "").trim());
       const safety = normAttr(attrs?.safety_level);
       // Если у страны нет уровня безопасности в данных — не блокируем визовую раскраску
       if (safety && !activeSafetyLevelsRef.current.has(safety)) {
@@ -420,16 +502,43 @@ export default function VisaMap({
         return false;
       }
       if (affBands.size > 0) {
-        const score = travelCostScoresRef.current[iso2];
-        if (score == null) {
-          return false;
-        }
-        const bands =
-          travelCostScoreBandsRef.current ?? DEFAULT_TRAVEL_COST_SCORE_BANDS;
-        if (
-          !scoreMatchesActiveAffordabilityBands(score, bands, affBands)
-        ) {
-          return false;
+        if (budgetFilterModeRef.current === "exact") {
+          const exactBands = exactBudgetAffordabilityBandsRef.current;
+          const exactReady = Object.keys(exactBands).length > 0;
+          if (exactReady) {
+            const exactBand = exactBands[isoUpper];
+            if (!exactBand || !affBands.has(exactBand)) {
+              return false;
+            }
+          } else {
+            const score =
+              travelCostScoresRef.current[isoUpper] ??
+              travelCostScoresRef.current[String(iso2 ?? "").trim()];
+            if (score == null) {
+              return false;
+            }
+            const bands =
+              travelCostScoreBandsRef.current ?? DEFAULT_TRAVEL_COST_SCORE_BANDS;
+            if (
+              !scoreMatchesActiveAffordabilityBands(score, bands, affBands)
+            ) {
+              return false;
+            }
+          }
+        } else {
+          const score =
+            travelCostScoresRef.current[isoUpper] ??
+            travelCostScoresRef.current[String(iso2 ?? "").trim()];
+          if (score == null) {
+            return false;
+          }
+          const bands =
+            travelCostScoreBandsRef.current ?? DEFAULT_TRAVEL_COST_SCORE_BANDS;
+          if (
+            !scoreMatchesActiveAffordabilityBands(score, bands, affBands)
+          ) {
+            return false;
+          }
         }
       }
       const distinctSeason = seasonDistinctKeysRef.current;
@@ -529,6 +638,27 @@ export default function VisaMap({
     if (mode === "budget") {
       const bands =
         travelCostScoreBandsRef.current ?? DEFAULT_TRAVEL_COST_SCORE_BANDS;
+      if (budgetFilterModeRef.current === "exact") {
+        const exactBands = exactBudgetAffordabilityBandsRef.current;
+        if (Object.keys(exactBands).length > 0) {
+          applyExactBudgetColors(
+            m,
+            exactBands,
+            bands,
+            passesForNonSeasonLayers,
+            true,
+          );
+        } else {
+          applyTravelCostColors(
+            m,
+            travelCostScoresRef.current,
+            bands,
+            passesForNonSeasonLayers,
+            true,
+          );
+        }
+        return;
+      }
       applyTravelCostColors(
         m,
         travelCostScoresRef.current,
@@ -643,17 +773,34 @@ export default function VisaMap({
     if (!map.current || !mapLoadedRef.current) return;
     const iso = passportIso2.trim();
     if (!iso) {
+      visaMapFetchGenRef.current += 1;
       visaDataRef.current = [];
       refreshMapPaint();
       return;
     }
+    const gen = ++visaMapFetchGenRef.current;
     try {
-      const response = await fetch(`${API_URL}/visa-map/${iso}`);
-      const visaData: VisaDetail[] = await response.json();
-      visaDataRef.current = visaData;
+      const url = `${API_BASE}/visa-map/${encodeURIComponent(iso.toUpperCase())}`;
+      const response = await fetchJsonDeduped(url);
+      if (visaMapFetchGenRef.current !== gen) return;
+      if (!response.ok) {
+        visaDataRef.current = [];
+        refreshMapPaint();
+        return;
+      }
+      const raw: unknown = response.data;
+      if (!Array.isArray(raw)) {
+        visaDataRef.current = [];
+        refreshMapPaint();
+        return;
+      }
+      visaDataRef.current = raw as VisaDetail[];
       refreshMapPaint();
     } catch (error) {
+      if (visaMapFetchGenRef.current !== gen) return;
       console.error("Ошибка загрузки визовых данных:", error);
+      visaDataRef.current = [];
+      refreshMapPaint();
     }
   }, [refreshMapPaint]);
 
@@ -667,6 +814,7 @@ export default function VisaMap({
     refreshMapPaint();
   }, [
     refreshMapPaint,
+    passport,
     mapColorMode,
     coloringEnabled,
     activeCategories,
@@ -676,13 +824,14 @@ export default function VisaMap({
     seasonDistinctKeys,
     seasonMonth,
     travelCostScores,
+    budgetFilterMode,
+    exactBudgetAffordabilityBands,
     travelCostScoreBands,
   ]);
 
   useEffect(() => {
-    if (passport && mapLoadedRef.current) {
-      loadVisaMap(passport);
-    }
+    if (!mapLoadedRef.current) return;
+    void loadVisaMap(passport);
   }, [passport, loadVisaMap]);
 
   useEffect(() => {
@@ -791,10 +940,13 @@ export default function VisaMap({
           const country = await response.json();
           const visa = visaDataRef.current.find((v) => v.iso2 === iso2) ?? null;
           const scores = travelCostScoresRef.current;
+          const exactBands = exactBudgetAffordabilityBandsRef.current;
           const withCost =
-            scores[isoUpper] != null
-              ? { ...country, cost_score: scores[isoUpper] }
-              : country;
+            budgetFilterModeRef.current === "exact"
+              ? { ...country, exact_budget_band: exactBands[isoUpper] ?? null }
+              : scores[isoUpper] != null
+                ? { ...country, cost_score: scores[isoUpper] }
+                : country;
           setPopupCountry(withCost);
           setPopupVisa(visa);
           setPopupPos({ x: mouseX, y: mouseY });

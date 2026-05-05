@@ -26,6 +26,8 @@ interface Country {
 interface PassportCountrySearchProps {
   value: string;
   onChange: (iso2: string, nameRu?: string) => void;
+  /** Прогрев лёгких JSON до коммита родителя (travel-costs, visa-map, курсы…). */
+  onWarmPassportCaches?: (iso2: string) => void;
   /** Tailwind-классы корневого блока (ширина, отступы) */
   className?: string;
 }
@@ -34,7 +36,7 @@ function norm(s: string): string {
   return s.trim().toLowerCase();
 }
 
-/** Региональные индикаторы Юникода для ISO 3166‑1 alpha‑2 (два латинских символа). */
+/** Региональные индикаторы Юникода для ISO 3166-1 alpha-2 (два латинских символа). */
 function iso2ToFlagEmoji(iso2: string): string {
   const cc = iso2.trim().toUpperCase();
   if (cc.length !== 2 || !/^[A-Z]{2}$/.test(cc)) {
@@ -88,43 +90,11 @@ function filterCountries(query: string, list: Country[]): Country[] {
   return out;
 }
 
-/** Разрешить строку поиска в страну без выбора из списка (Enter / blur). */
-function resolveCountry(query: string, list: Country[]): Country | null {
-  const q = norm(query);
-  if (!q) return null;
-
-  const isoExact = list.find((c) => c.iso2.toLowerCase() === q);
-  if (isoExact) return isoExact;
-
-  const ruExact = list.find((c) => norm(c.name_ru) === q);
-  if (ruExact) return ruExact;
-
-  const enExact = list.find((c) => norm(c.name_en) === q);
-  if (enExact) return enExact;
-
-  const startsRu = list.filter((c) => norm(c.name_ru).startsWith(q));
-  if (startsRu.length === 1) return startsRu[0];
-
-  const startsEn = list.filter((c) => norm(c.name_en).startsWith(q));
-  if (startsEn.length === 1) return startsEn[0];
-
-  const inclRu = list.filter((c) => norm(c.name_ru).includes(q));
-  if (inclRu.length === 1) return inclRu[0];
-
-  const inclEn = list.filter((c) => norm(c.name_en).includes(q));
-  if (inclEn.length === 1) return inclEn[0];
-
-  const pool = [
-    ...new Map(
-      [...startsRu, ...startsEn, ...inclRu, ...inclEn].map((c) => [
-        c.iso2,
-        c,
-      ]),
-    ).values(),
-  ];
-  if (pool.length === 1) return pool[0];
-
-  return null;
+/** Все страны отсортированные по алфавиту (для пустого запроса). */
+function allCountriesSorted(list: Country[]): Country[] {
+  return [...list]
+    .sort((a, b) => norm(a.name_ru).localeCompare(norm(b.name_ru), "ru"))
+    .slice(0, SUGGEST_LIMIT);
 }
 
 function SearchGlyph({ className }: { className?: string }) {
@@ -149,17 +119,17 @@ function SearchGlyph({ className }: { className?: string }) {
 export default function PassportCountrySearch({
   value,
   onChange,
+  onWarmPassportCaches,
   className = "",
 }: PassportCountrySearchProps) {
   const id = useId();
   const listboxId = `${id}-listbox`;
   const [countries, setCountries] = useState<Country[]>([]);
-  const [edit, setEdit] = useState<string | null>(null);
-  const [focused, setFocused] = useState(false);
-  /** Скрыть подсказки до следующего ввода (Escape без blur). */
-  const [suppressList, setSuppressList] = useState(false);
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const canonical = useMemo(() => {
     if (!value.trim() || !countries.length) return "";
@@ -169,24 +139,21 @@ export default function PassportCountrySearch({
     return c?.name_ru ?? "";
   }, [value, countries]);
 
-  const draft = edit !== null ? edit : canonical;
+  const suggestions = useMemo(() => {
+    if (!countries.length) return [];
+    if (!open) return [];
+    const q = query.trim();
+    if (!q.length) return allCountriesSorted(countries);
+    return filterCountries(query, countries);
+  }, [countries, query, open]);
 
-  const suggestions = useMemo(
-    () => filterCountries(draft, countries),
-    [draft, countries],
-  );
-
-  const listOpen =
-    focused &&
-    !suppressList &&
-    draft.trim().length > 0 &&
-    suggestions.length > 0;
+  const listOpen = open && suggestions.length > 0;
 
   useEffect(() => {
     queueMicrotask(() => {
       setHighlight(0);
     });
-  }, [draft, suggestions.length]);
+  }, [query, suggestions.length]);
 
   useEffect(() => {
     fetch(`${API_URL}/countries`)
@@ -197,30 +164,23 @@ export default function PassportCountrySearch({
       .catch(() => setCountries([]));
   }, []);
 
+  // Синхронизируем query с внешним value (canonical) когда пользователь НЕ редактирует
+  useEffect(() => {
+    if (!open && query !== canonical) {
+      setQuery(canonical);
+    }
+  }, [canonical, open]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const selectCountry = useCallback(
     (c: Country) => {
+      const iso = c.iso2.trim().toUpperCase();
+      onWarmPassportCaches?.(iso);
       onChange(c.iso2, c.name_ru);
-      setEdit(null);
-      setFocused(false);
-      setSuppressList(false);
+      setQuery(c.name_ru);
+      setOpen(false);
     },
-    [onChange],
+    [onChange, onWarmPassportCaches],
   );
-
-  function commitFromDraft(nextDraft?: string) {
-    const text = (nextDraft ?? draft).trim();
-    if (!text) {
-      onChange("", undefined);
-      setEdit(null);
-      return;
-    }
-    const hit = resolveCountry(text, countries);
-    if (!hit) {
-      setEdit(null);
-      return;
-    }
-    selectCountry(hit);
-  }
 
   return (
     <div ref={rootRef} className={`relative ${className}`}>
@@ -232,6 +192,7 @@ export default function PassportCountrySearch({
           <SearchGlyph className="h-5 w-5 shrink-0 text-primary" />
           <div className="relative flex min-w-0 flex-1 flex-col justify-center">
             <input
+              ref={inputRef}
               type="text"
               inputMode="search"
               enterKeyHint="search"
@@ -247,22 +208,21 @@ export default function PassportCountrySearch({
               aria-required="true"
               aria-label="Страна гражданства, поле поиска"
               placeholder="Укажите свою страну…"
-              value={draft}
+              value={query}
               onChange={(e) => {
-                setSuppressList(false);
-                setEdit(e.target.value);
+                setQuery(e.target.value);
+                setOpen(true);
               }}
               onFocus={() => {
-                setFocused(true);
-                setSuppressList(false);
+                inputRef.current?.select();
+                setOpen(true);
               }}
               onBlur={(e) => {
                 const rt = e.relatedTarget;
                 if (rt instanceof Node && rootRef.current?.contains(rt)) {
                   return;
                 }
-                setFocused(false);
-                commitFromDraft();
+                setOpen(false);
               }}
               onKeyDown={(e) => {
                 if (listOpen) {
@@ -280,7 +240,7 @@ export default function PassportCountrySearch({
                   }
                   if (e.key === "Escape") {
                     e.preventDefault();
-                    setSuppressList(true);
+                    setOpen(false);
                     return;
                   }
                 }
@@ -290,7 +250,7 @@ export default function PassportCountrySearch({
                     selectCountry(suggestions[highlight]);
                     return;
                   }
-                  commitFromDraft((e.target as HTMLInputElement).value);
+                  setOpen(false);
                 }
               }}
               className="w-full min-w-0 border-none bg-transparent py-0.5 text-sm font-medium text-on-surface outline-none placeholder:text-outline placeholder:font-normal"

@@ -10,6 +10,8 @@ import {
 } from "react";
 import {
   ALL_AFFORDABILITY_BAND_KEYS,
+  ALL_REGION_KEYS,
+  ALL_VACATION_FIT_BAND_KEYS,
   type AffordabilityBandKey,
   type BudgetFilterMode,
   type ExactBudgetData,
@@ -17,6 +19,8 @@ import {
   type TravelCurrencyListResponse,
   type TravelFxRateResponse,
   type TravelSpendingTier,
+  type VacationDimensionKey,
+  type VacationFitBandKey,
 } from "../types/map";
 import type { MatchingCountryRow } from "../types/matching-country";
 import type { TravelCostScoreBands } from "../lib/travel-cost-score-bands";
@@ -28,6 +32,17 @@ import {
 import { fetchJsonDeduped } from "../lib/json-fetch-dedupe";
 import { prefetchPassportBootstrap } from "../lib/passport-bootstrap-prefetch";
 import { getSeasonFilterRowPresentation } from "../lib/season-colors";
+import {
+  computeVacationFit,
+  DEFAULT_VACATION_LADDER,
+  ladderToWeights,
+  type VacationLadderItem,
+  type VacationProfilesByIso,
+} from "../lib/vacation-fit";
+import {
+  insertAtToTargetIndex,
+  reorderLadderItems,
+} from "../lib/vacation-ladder-reorder";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const API_BASE = API_URL.replace(/\/$/, "");
@@ -41,15 +56,7 @@ export type TravelCostScoreBandsStatus = "pending" | "ok" | "error";
 
 const ALL_CATEGORIES = new Set(["free", "evisa", "voa", "embassy", "unavailable"]);
 const ALL_SAFETY_LEVELS = new Set(["safe", "unsafe", "dangerous"]);
-const ALL_VACATION_TYPES = new Set([
-  "beach",
-  "mountain",
-  "nature",
-  "culture",
-  "food",
-  "exotic",
-]);
-
+const ALL_REGIONS = new Set<string>(ALL_REGION_KEYS);
 const DEFAULT_EXACT_TRIP_DAYS = "10";
 
 interface CountryShortApi {
@@ -102,6 +109,9 @@ export function useHomeMapState() {
   const [activeSafetyLevels, setActiveSafetyLevels] = useState<Set<string>>(
     () => new Set(ALL_SAFETY_LEVELS),
   );
+  const [activeRegions, setActiveRegions] = useState<Set<string>>(
+    () => new Set(ALL_REGIONS),
+  );
   const [travelSpendingTier, setTravelSpendingTier] =
     useState<TravelSpendingTier>("normal");
   const [activeAffordabilityBands, setActiveAffordabilityBands] = useState<
@@ -116,9 +126,17 @@ export function useHomeMapState() {
   const [coloringEnabled, setColoringEnabled] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
-  const [activeVacationTypes, setActiveVacationTypes] = useState<Set<string>>(
-    () => new Set(ALL_VACATION_TYPES),
+  const [vacationLadder, setVacationLadder] = useState<VacationLadderItem[]>(
+    () => DEFAULT_VACATION_LADDER.map((item) => ({ ...item })),
   );
+  const [activeVacationFitBands, setActiveVacationFitBands] = useState<
+    Set<VacationFitBandKey>
+  >(() => new Set());
+  const [vacationProfiles, setVacationProfiles] =
+    useState<VacationProfilesByIso>({});
+  const [vacationExoticByDest, setVacationExoticByDest] = useState<
+    Record<string, number>
+  >({});
   const [selectedDepartureCities, setSelectedDepartureCities] = useState<
     Set<string>
   >(() => new Set());
@@ -173,9 +191,82 @@ export function useHomeMapState() {
         bands.size > 0 ? bands : new Set(ALL_AFFORDABILITY_BAND_KEYS),
       );
     }
+    if (mode === "vacation") {
+      setActiveVacationFitBands((bands) =>
+        bands.size > 0 ? bands : new Set(ALL_VACATION_FIT_BAND_KEYS),
+      );
+    }
+    if (mode === "region") {
+      setActiveRegions((regions) =>
+        regions.size > 0 ? regions : new Set(ALL_REGIONS),
+      );
+    }
   }, []);
 
   const seasonMonthRef = useRef(seasonMonth);
+
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchJsonDeduped(`${API_BASE}/vacation-profiles`)
+      .then((res) => {
+        if (cancelled || !res.ok) return;
+        const data = res.data as { profiles?: VacationProfilesByIso };
+        setVacationProfiles(data.profiles ?? {});
+      })
+      .catch(() => {
+        if (!cancelled) setVacationProfiles({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const iso = passport.trim().toUpperCase();
+    if (!iso) {
+      queueMicrotask(() => {
+        if (!cancelled) setVacationExoticByDest({});
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+    void fetchJsonDeduped(`${API_BASE}/vacation-exotic/${encodeURIComponent(iso)}`)
+      .then((res) => {
+        if (cancelled) return;
+        if (!res.ok) {
+          setVacationExoticByDest({});
+          return;
+        }
+        const data = res.data as { scores?: Record<string, number> };
+        setVacationExoticByDest(data.scores ?? {});
+      })
+      .catch(() => {
+        if (!cancelled) setVacationExoticByDest({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [passport]);
+
+  const vacationWeights = useMemo(
+    () => ladderToWeights(vacationLadder),
+    [vacationLadder],
+  );
+
+  const vacationFit = useMemo(() => {
+    const hasWeight = Object.values(vacationWeights).some((w) => w > 0);
+    if (!hasWeight) {
+      return { scores: {} as Record<string, number>, destBand: {} };
+    }
+    return computeVacationFit(
+      vacationProfiles,
+      vacationExoticByDest,
+      vacationWeights,
+    );
+  }, [vacationProfiles, vacationExoticByDest, vacationWeights]);
 
   useEffect(() => {
     let cancelled = false;
@@ -573,6 +664,15 @@ export function useHomeMapState() {
     });
   }, []);
 
+  const handleToggleRegion = useCallback((key: string) => {
+    setActiveRegions((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
   const handleTravelSpendingTierChange = useCallback((tier: TravelSpendingTier) => {
     setTravelSpendingTier(tier);
   }, []);
@@ -603,14 +703,81 @@ export function useHomeMapState() {
     });
   }, []);
 
-  const handleToggleVacationType = useCallback((key: string) => {
-    setActiveVacationTypes((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }, []);
+  const handleVacationLadderReorder = useCallback(
+    (fromIndex: number, insertAt: number) => {
+      setVacationLadder((prev) => {
+        const toIndex = insertAtToTargetIndex(fromIndex, insertAt, prev.length);
+        if (toIndex == null) return prev;
+        return reorderLadderItems(
+          prev.map((item) => ({ ...item })),
+          fromIndex,
+          toIndex,
+        );
+      });
+      setMapColorMode("vacation");
+      setColoringEnabled(true);
+    },
+    [setMapColorMode],
+  );
+
+  const handleVacationLadderMoveUp = useCallback(
+    (slotIndex: number) => {
+      if (slotIndex <= 0) return;
+      setVacationLadder((prev) =>
+        reorderLadderItems(
+          prev.map((item) => ({ ...item })),
+          slotIndex,
+          slotIndex - 1,
+        ),
+      );
+      setMapColorMode("vacation");
+      setColoringEnabled(true);
+    },
+    [setMapColorMode],
+  );
+
+  const handleVacationLadderMoveDown = useCallback(
+    (slotIndex: number) => {
+      setVacationLadder((prev) => {
+        if (slotIndex >= prev.length - 1) return prev;
+        return reorderLadderItems(
+          prev.map((item) => ({ ...item })),
+          slotIndex,
+          slotIndex + 1,
+        );
+      });
+      setMapColorMode("vacation");
+      setColoringEnabled(true);
+    },
+    [setMapColorMode],
+  );
+
+  const handleVacationLadderToggleEnabled = useCallback(
+    (slotIndex: number) => {
+      setVacationLadder((prev) =>
+        prev.map((item, i) =>
+          i === slotIndex ? { ...item, enabled: !item.enabled } : item,
+        ),
+      );
+      setMapColorMode("vacation");
+      setColoringEnabled(true);
+    },
+    [setMapColorMode],
+  );
+
+  const handleToggleVacationFitBand = useCallback(
+    (key: VacationFitBandKey) => {
+      setActiveVacationFitBands((prev) => {
+        const next = new Set(prev);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        return next;
+      });
+      setMapColorMode("vacation");
+      setColoringEnabled(true);
+    },
+    [setMapColorMode],
+  );
 
   const handleToggleDepartureCity = useCallback((city: string) => {
     setSelectedDepartureCities((prev) => {
@@ -625,6 +792,7 @@ export function useHomeMapState() {
     passport,
     activeCategories,
     activeSafetyLevels,
+    activeRegions,
     travelSpendingTier,
     activeAffordabilityBands,
     mapColorMode,
@@ -633,7 +801,10 @@ export function useHomeMapState() {
     activeSeasonTypes,
     coloringEnabled,
     sidebarOpen,
-    activeVacationTypes,
+    vacationLadder,
+    activeVacationFitBands,
+    vacationFitScores: vacationFit.scores,
+    vacationDestBands: vacationFit.destBand,
     selectedDepartureCities,
     matchingCountries,
     matchingListReady,
@@ -661,6 +832,7 @@ export function useHomeMapState() {
     handleMatchingIso2sChange,
     handleToggleCategory,
     handleToggleSafetyLevel,
+    handleToggleRegion,
     handleTravelSpendingTierChange,
     handleBudgetFilterModeChange,
     setExactBudgetAmount,
@@ -669,7 +841,11 @@ export function useHomeMapState() {
     resetExactBudgetDefaults,
     handleToggleAffordabilityBand,
     handleToggleSeasonType,
-    handleToggleVacationType,
+    handleVacationLadderReorder,
+    handleVacationLadderMoveUp,
+    handleVacationLadderMoveDown,
+    handleVacationLadderToggleEnabled,
+    handleToggleVacationFitBand,
     handleToggleDepartureCity,
     setColoringEnabled,
   };

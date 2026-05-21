@@ -17,8 +17,13 @@ import {
   travelCostColorForScore,
   type TravelCostScoreBands,
 } from "../lib/travel-cost-score-bands";
+import {
+  vacationBandColor,
+  VACATION_FIT_BAND_LABELS,
+} from "../lib/vacation-fit";
 import { fetchJsonDeduped } from "../lib/json-fetch-dedupe";
 import {
+  MAP_REGION_FILL_COLORS,
   MAP_SAFETY_FILL_COLORS,
   MAP_VISA_FILL_COLORS,
 } from "../lib/map-fill-palettes";
@@ -26,6 +31,7 @@ import type {
   AffordabilityBandKey,
   BudgetFilterMode,
   MapColorMode,
+  VacationFitBandKey,
 } from "../types/map";
 import type { MatchingCountryRow } from "../types/matching-country";
 
@@ -70,10 +76,13 @@ interface CountryInfo {
   safety_level?: string | null;
   cost_score?: number | null;
   exact_budget_band?: AffordabilityBandKey | null;
+  vacation_score?: number | null;
+  vacation_fit_band?: VacationFitBandKey | null;
 }
 
 interface CountryAttrs {
   safety_level?: string | null;
+  region?: string | null;
 }
 
 interface VisaMapProps {
@@ -82,6 +91,7 @@ interface VisaMapProps {
   mapColorMode: MapColorMode;
   seasonMonth: number;
   activeSafetyLevels: Set<string>;
+  activeRegions: Set<string>;
   activeAffordabilityBands: Set<AffordabilityBandKey>;
   activeSeasonTypes: Set<string>;
   /** Уникальные сезоны за выбранный месяц (с бэка или из фич) */
@@ -96,6 +106,9 @@ interface VisaMapProps {
   exactBudgetAffordabilityBands: Record<string, AffordabilityBandKey>;
   /** Пороги/подписи/цвета из GET /travel-costs/score-bands */
   travelCostScoreBands: TravelCostScoreBands | null;
+  vacationFitScores: Record<string, number>;
+  vacationDestBands: Record<string, VacationFitBandKey>;
+  activeVacationFitBands: Set<VacationFitBandKey>;
 }
 
 function normAttr(raw: string | null | undefined): string {
@@ -142,6 +155,7 @@ function buildCountryAttrsIndex(
     if (!iso2) continue;
     out.set(iso2, {
       safety_level: p.safety_level as string | null | undefined,
+      region: p.region as string | null | undefined,
     });
   }
   return out;
@@ -202,7 +216,7 @@ function applyVisaColorsWithCompositeFilters(
 
 function applyAttributeColorsWithCompositeFilters(
   mapInstance: maplibregl.Map,
-  field: "safety_level",
+  field: "safety_level" | "region",
   palette: Record<string, string>,
   activeLevels: Set<string>,
   countryAttrs: Map<string, CountryAttrs>,
@@ -219,7 +233,12 @@ function applyAttributeColorsWithCompositeFilters(
 
   for (const [iso2, attrs] of countryAttrs) {
     const levelRaw = attrs[field];
-    const level = normAttr(levelRaw);
+    const level =
+      field === "region"
+        ? levelRaw == null
+          ? ""
+          : String(levelRaw).trim()
+        : normAttr(levelRaw);
     const inSet = Boolean(level && activeLevels.has(level));
     const show = passes(iso2) && inSet;
     const col =
@@ -312,6 +331,41 @@ function applyExactBudgetColors(
   mapInstance.setPaintProperty("countries-fill", "fill-opacity", opacityExpression);
 }
 
+
+
+function applyVacationFitColors(
+  mapInstance: maplibregl.Map,
+  destBands: Record<string, VacationFitBandKey>,
+  passes: (iso2: string) => boolean,
+  enabled: boolean,
+) {
+  if (!enabled) {
+    mapInstance.setPaintProperty("countries-fill", "fill-opacity", 0);
+    return;
+  }
+  const isoKeys = Object.keys(destBands);
+  if (isoKeys.length === 0) {
+    mapInstance.setPaintProperty("countries-fill", "fill-color", NEUTRAL_COUNTRIES_COLOR);
+    mapInstance.setPaintProperty("countries-fill", "fill-opacity", DIM_FILL_OPACITY);
+    return;
+  }
+  const colorExpression: unknown[] = ["match", ["get", "iso2"]];
+  const opacityExpression: unknown[] = ["match", ["get", "iso2"]];
+
+  for (const iso2 of isoKeys) {
+    const band = destBands[iso2];
+    const ok = passes(iso2);
+    const col = vacationBandColor(band);
+    colorExpression.push(iso2, ok ? col : NEUTRAL_COUNTRIES_COLOR);
+    opacityExpression.push(iso2, ok ? HIGH_FILL_OPACITY : DIM_FILL_OPACITY);
+  }
+  colorExpression.push(NEUTRAL_COUNTRIES_COLOR);
+  opacityExpression.push(DIM_FILL_OPACITY);
+
+  mapInstance.setPaintProperty("countries-fill", "fill-color", colorExpression);
+  mapInstance.setPaintProperty("countries-fill", "fill-opacity", opacityExpression);
+}
+
 function setSeasonLayerVisibility(mapInstance: maplibregl.Map, visible: boolean) {
   if (!mapInstance.getLayer(SEASONS_LAYER_ID)) return;
   mapInstance.setLayoutProperty(
@@ -350,6 +404,7 @@ export default function VisaMap({
   mapColorMode,
   seasonMonth,
   activeSafetyLevels,
+  activeRegions,
   activeAffordabilityBands,
   activeSeasonTypes,
   seasonDistinctKeys,
@@ -360,6 +415,9 @@ export default function VisaMap({
   budgetFilterMode,
   exactBudgetAffordabilityBands,
   travelCostScoreBands,
+  vacationFitScores,
+  vacationDestBands,
+  activeVacationFitBands,
 }: VisaMapProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
@@ -371,6 +429,7 @@ export default function VisaMap({
   const mapColorModeRef = useRef(mapColorMode);
   const seasonMonthRef = useRef(seasonMonth);
   const activeSafetyLevelsRef = useRef(activeSafetyLevels);
+  const activeRegionsRef = useRef(activeRegions);
   const activeSeasonTypesRef = useRef(activeSeasonTypes);
   const seasonDistinctKeysRef = useRef(seasonDistinctKeys);
   const seasonFetchGenRef = useRef(0);
@@ -397,6 +456,9 @@ export default function VisaMap({
   const exactBudgetAffordabilityBandsRef = useRef(exactBudgetAffordabilityBands);
   const travelCostScoreBandsRef = useRef(travelCostScoreBands);
   const activeAffordabilityBandsRef = useRef(activeAffordabilityBands);
+  const vacationFitScoresRef = useRef(vacationFitScores);
+  const vacationDestBandsRef = useRef(vacationDestBands);
+  const activeVacationFitBandsRef = useRef(activeVacationFitBands);
 
   const [popupCountry, setPopupCountry] = useState<CountryInfo | null>(null);
   const [popupVisa, setPopupVisa] = useState<VisaDetail | null>(null);
@@ -421,6 +483,10 @@ export default function VisaMap({
   useEffect(() => {
     activeSafetyLevelsRef.current = activeSafetyLevels;
   }, [activeSafetyLevels]);
+
+  useEffect(() => {
+    activeRegionsRef.current = activeRegions;
+  }, [activeRegions]);
 
   useEffect(() => {
     activeAffordabilityBandsRef.current = activeAffordabilityBands;
@@ -460,6 +526,18 @@ export default function VisaMap({
     travelCostScoreBandsRef.current = travelCostScoreBands;
   }, [travelCostScoreBands]);
 
+  useEffect(() => {
+    vacationFitScoresRef.current = vacationFitScores;
+  }, [vacationFitScores]);
+
+  useEffect(() => {
+    vacationDestBandsRef.current = vacationDestBands;
+  }, [vacationDestBands]);
+
+  useEffect(() => {
+    activeVacationFitBandsRef.current = activeVacationFitBands;
+  }, [activeVacationFitBands]);
+
   const refreshMapPaint = useCallback(() => {
     const m = map.current;
     if (!m || !mapLoadedRef.current) return;
@@ -496,6 +574,13 @@ export default function VisaMap({
       // Если у страны нет уровня безопасности в данных — не блокируем визовую раскраску
       if (safety && !activeSafetyLevelsRef.current.has(safety)) {
         return false;
+      }
+      const activeRegs = activeRegionsRef.current;
+      if (activeRegs.size > 0) {
+        const region = String(attrs?.region ?? "").trim();
+        if (region && !activeRegs.has(region)) {
+          return false;
+        }
       }
       const affBands = activeAffordabilityBandsRef.current;
       if (mapColorModeRef.current === "budget" && affBands.size === 0) {
@@ -539,6 +624,19 @@ export default function VisaMap({
           ) {
             return false;
           }
+        }
+      }
+      const vacBands = activeVacationFitBandsRef.current;
+      if (mapColorModeRef.current === "vacation" && vacBands.size === 0) {
+        return false;
+      }
+      if (vacBands.size > 0) {
+        const isoUpperVac = String(iso2 ?? "").trim().toUpperCase();
+        const band =
+          vacationDestBandsRef.current[isoUpperVac] ??
+          vacationDestBandsRef.current[String(iso2 ?? "").trim()];
+        if (!band || !vacBands.has(band)) {
+          return false;
         }
       }
       const distinctSeason = seasonDistinctKeysRef.current;
@@ -629,6 +727,29 @@ export default function VisaMap({
         MAP_SAFETY_FILL_COLORS,
         activeSafetyLevelsRef.current,
         countryAttrsRef.current,
+        passesForNonSeasonLayers,
+        true,
+      );
+      return;
+    }
+
+    if (mode === "region") {
+      applyAttributeColorsWithCompositeFilters(
+        m,
+        "region",
+        MAP_REGION_FILL_COLORS,
+        activeRegionsRef.current,
+        countryAttrsRef.current,
+        passesForNonSeasonLayers,
+        true,
+      );
+      return;
+    }
+
+    if (mode === "vacation") {
+      applyVacationFitColors(
+        m,
+        vacationDestBandsRef.current,
         passesForNonSeasonLayers,
         true,
       );
@@ -819,6 +940,7 @@ export default function VisaMap({
     coloringEnabled,
     activeCategories,
     activeSafetyLevels,
+    activeRegions,
     activeAffordabilityBands,
     activeSeasonTypes,
     seasonDistinctKeys,
@@ -827,6 +949,9 @@ export default function VisaMap({
     budgetFilterMode,
     exactBudgetAffordabilityBands,
     travelCostScoreBands,
+    vacationFitScores,
+    vacationDestBands,
+    activeVacationFitBands,
   ]);
 
   useEffect(() => {
@@ -947,7 +1072,17 @@ export default function VisaMap({
               : scores[isoUpper] != null
                 ? { ...country, cost_score: scores[isoUpper] }
                 : country;
-          setPopupCountry(withCost);
+          const vacScore = vacationFitScoresRef.current[isoUpper];
+          const vacBand = vacationDestBandsRef.current[isoUpper];
+          const withVacation =
+            vacScore != null || vacBand
+              ? {
+                  ...withCost,
+                  vacation_score: vacScore ?? null,
+                  vacation_fit_band: vacBand ?? null,
+                }
+              : withCost;
+          setPopupCountry(withVacation);
           setPopupVisa(visa);
           setPopupPos({ x: mouseX, y: mouseY });
         } catch (error) {

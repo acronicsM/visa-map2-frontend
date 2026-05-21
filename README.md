@@ -49,6 +49,7 @@ npm run dev
 | Безопасность | `safety_level` из геоданных стран |
 | Стоимость / бюджет | `GET /travel-costs/{passport}?budget_tier=cheap\|normal\|expensive` для рельсы «Ощущения бюджета»; `GET /travel-costs/{passport}/exact-budget-data` для точной суммы; пороги/подписи — `GET /travel-costs/score-bands` |
 | Сезонность | `GET /country-seasons/{month}/geodata` (при необходимости параллельно `GET /country-seasons/{month}/meta`) |
+| Тип отдыха | `GET /vacation-profiles` (скаляры) + `GET /vacation-exotic/{passport}`; веса 0–6 и 4 полосы считаются на клиенте |
 
 Фильтры боковой панели накладываются **совместно (И)**: заметная заливка по текущему режиму только у стран, которые одновременно удовлетворяют выбранным визовым категориям, безопасности, бюджетным категориям, языку и сезонным типам для выбранного месяца; остальные отображаются приглушённо.
 

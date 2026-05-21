@@ -2,22 +2,31 @@
 
 import { Fragment, useId, useLayoutEffect, useRef, useState } from "react";
 import DepartureCityMultiSelect from "./departure-city-multi-select";
+import VacationPriorityLadderDnD from "./vacation-priority-ladder-dnd";
+import type { VacationLadderItem } from "../lib/vacation-fit";
 import type {
   AffordabilityBandKey,
   BudgetFilterMode,
   MapColorMode,
   TravelSpendingTier,
+  VacationFitBandKey,
 } from "../types/map";
 import {
   affordabilityBandSidebarColor,
   type TravelCostScoreBands,
 } from "../lib/travel-cost-score-bands";
 import {
+  MAP_REGION_FILL_COLORS,
   MAP_SAFETY_FILL_COLORS,
   MAP_VISA_FILL_COLORS,
+  SIDEBAR_REGION_FILTER_ROWS,
   SIDEBAR_SAFETY_FILTER_ROWS,
   SIDEBAR_VISA_FILTER_ROWS,
 } from "../lib/map-fill-palettes";
+import {
+  VACATION_FIT_BAND_COLORS,
+  VACATION_FIT_BAND_LABELS,
+} from "../lib/vacation-fit";
 
 const SPENDING_TIER_OPTIONS: { key: TravelSpendingTier; label: string }[] = [
   { key: "cheap", label: "Скромно" },
@@ -33,13 +42,11 @@ const AFFORDABILITY_OPTIONS: { key: AffordabilityBandKey; label: string }[] = [
   { key: "carefree", label: "Без забот" },
 ];
 
-const VACATION_TYPES: { key: string; label: string; color: string }[] = [
-  { key: "beach", label: "Пляжный", color: "#22c55e" },
-  { key: "mountain", label: "Горный", color: "#3b82f6" },
-  { key: "nature", label: "Природа", color: "#eab308" },
-  { key: "culture", label: "Культура", color: "#a855f7" },
-  { key: "food", label: "Еда", color: "#f97316" },
-  { key: "exotic", label: "Экзотика", color: "#ec4899" },
+const VACATION_FIT_OPTIONS: { key: VacationFitBandKey; label: string }[] = [
+  { key: "excellent", label: VACATION_FIT_BAND_LABELS.excellent },
+  { key: "good", label: VACATION_FIT_BAND_LABELS.good },
+  { key: "doubtful", label: VACATION_FIT_BAND_LABELS.doubtful },
+  { key: "unlikely", label: VACATION_FIT_BAND_LABELS.unlikely },
 ];
 
 /** Заглушка: города вылета до появления API */
@@ -56,13 +63,14 @@ const FILTER_GROUPS = [
   { key: "safety" as const, label: "Безопасность" },
   { key: "budget" as const, label: "Стоимость путешествия" },
   { key: "season" as const, label: "Сезонность" },
-  { key: "vacation" as const, label: "Тип отдыха" },
+  { key: "region" as const, label: "Регионы" },
+  { key: "vacation" as const, label: "Интересы" },
   { key: "flight" as const, label: "Прямой перелет" },
 ];
 
 type FilterGroupKey = (typeof FILTER_GROUPS)[number]["key"];
 
-const STUB_KEYS = new Set<FilterGroupKey>(["vacation", "flight"]);
+const STUB_KEYS = new Set<FilterGroupKey>(["flight"]);
 
 const MONTH_OPTIONS: { value: number; label: string }[] = [
   { value: 1, label: "Январь" },
@@ -497,6 +505,8 @@ interface FilterSidebarProps {
   onToggleCategory: (key: string) => void;
   activeSafetyLevels: Set<string>;
   onToggleSafetyLevel: (key: string) => void;
+  activeRegions: Set<string>;
+  onToggleRegion: (key: string) => void;
   travelSpendingTier: TravelSpendingTier;
   onTravelSpendingTierChange: (tier: TravelSpendingTier) => void;
   budgetFilterMode: BudgetFilterMode;
@@ -525,8 +535,14 @@ interface FilterSidebarProps {
   onColoringEnabledChange: (enabled: boolean) => void;
   isOpen: boolean;
   onToggleSidebar: () => void;
-  activeVacationTypes: Set<string>;
-  onToggleVacationType: (key: string) => void;
+  vacationLadder: VacationLadderItem[];
+  /** insertAt — индекс зазора вставки в лесенке (0…length). */
+  onVacationLadderReorder: (fromIndex: number, insertAt: number) => void;
+  onVacationLadderMoveUp: (slotIndex: number) => void;
+  onVacationLadderMoveDown: (slotIndex: number) => void;
+  onVacationLadderToggleEnabled: (slotIndex: number) => void;
+  activeVacationFitBands: Set<VacationFitBandKey>;
+  onToggleVacationFitBand: (key: VacationFitBandKey) => void;
   selectedDepartureCities: Set<string>;
   onToggleDepartureCity: (city: string) => void;
   /** Панель в оверлее превью: на всю ширину, без анимации сворачивания в 0px */
@@ -597,6 +613,8 @@ export default function FilterSidebar({
   onToggleCategory,
   activeSafetyLevels,
   onToggleSafetyLevel,
+  activeRegions,
+  onToggleRegion,
   travelSpendingTier,
   onTravelSpendingTierChange,
   budgetFilterMode,
@@ -624,8 +642,13 @@ export default function FilterSidebar({
   onColoringEnabledChange,
   isOpen,
   onToggleSidebar,
-  activeVacationTypes,
-  onToggleVacationType,
+  vacationLadder,
+  onVacationLadderReorder,
+  onVacationLadderMoveUp,
+  onVacationLadderMoveDown,
+  onVacationLadderToggleEnabled,
+  activeVacationFitBands,
+  onToggleVacationFitBand,
   selectedDepartureCities,
   onToggleDepartureCity,
   layout: layoutProp = "default",
@@ -897,29 +920,62 @@ export default function FilterSidebar({
                     </div>
                   )}
 
-
-                  {isSectionOpen && key === "vacation" && (
+                  {isSectionOpen && key === "region" && (
                     <div className="px-3 pb-4 flex flex-col gap-1 mx-[2px]">
-                      {VACATION_TYPES.map(({ key: vk, label: vLabel, color }) => (
-                        <div key={vk} className="flex items-center justify-between">
+                      {SIDEBAR_REGION_FILTER_ROWS.map(({ key: regKey, label: regLabel }) => (
+                        <div key={regKey} className="flex items-center justify-between">
                           <div className="flex items-center gap-0.5">
                             <span
                               className="w-3.5 h-3.5 rounded-full shrink-0"
-                              style={{ backgroundColor: color }}
+                              style={{
+                                backgroundColor:
+                                  MAP_REGION_FILL_COLORS[regKey] ?? "#94a3b8",
+                              }}
                             />
                             <span className="text-[14px] text-on-surface">
-                              {vLabel}
+                              {regLabel}
                             </span>
                           </div>
                           <Toggle
-                            checked={activeVacationTypes.has(vk)}
-                            onChange={() => onToggleVacationType(vk)}
+                            checked={activeRegions.has(regKey)}
+                            onChange={() => onToggleRegion(regKey)}
                           />
                         </div>
                       ))}
-                      <p className="mt-2 text-[12px] leading-snug text-outline">
-                        Заглушка: на карту пока не влияет.
+                    </div>
+                  )}
+
+                                    {isSectionOpen && key === "vacation" && (
+                    <div className="px-3 pb-4 flex flex-col gap-3 mx-[2px]">
+                      <p className="text-[12px] leading-snug text-outline">
+                        Расставьте интересы по важности в поездке
                       </p>
+                      <VacationPriorityLadderDnD
+                        ladder={vacationLadder}
+                        onReorder={onVacationLadderReorder}
+                        onMoveUp={onVacationLadderMoveUp}
+                        onMoveDown={onVacationLadderMoveDown}
+                        onToggleEnabled={onVacationLadderToggleEnabled}
+                      />
+                      <div className="border-t border-outline-variant pt-2 flex flex-col gap-1">
+                        {VACATION_FIT_OPTIONS.map(({ key: bk, label: bLabel }) => (
+                          <div key={bk} className="flex items-center justify-between">
+                            <div className="flex items-center gap-0.5">
+                              <span
+                                className="w-3.5 h-3.5 rounded-full shrink-0"
+                                style={{
+                                  backgroundColor: VACATION_FIT_BAND_COLORS[bk],
+                                }}
+                              />
+                              <span className="text-[14px] text-on-surface">{bLabel}</span>
+                            </div>
+                            <Toggle
+                              checked={activeVacationFitBands.has(bk)}
+                              onChange={() => onToggleVacationFitBand(bk)}
+                            />
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
 

@@ -33,3 +33,19 @@ export const SIDEBAR_SAFETY_FILTER_ROWS: { key: string; label: string }[] = [
   { key: "unsafe", label: "Риски" },
   { key: "dangerous", label: "Опасно" },
 ];
+
+export const MAP_REGION_FILL_COLORS: Record<string, string> = {
+  Europe: "#3b82f6",
+  Asia: "#f97316",
+  Africa: "#eab308",
+  Americas: "#22c55e",
+  Oceania: "#a855f7",
+};
+
+export const SIDEBAR_REGION_FILTER_ROWS: { key: string; label: string }[] = [
+  { key: "Europe", label: "Европа" },
+  { key: "Asia", label: "Азия" },
+  { key: "Africa", label: "Африка" },
+  { key: "Americas", label: "Америка" },
+  { key: "Oceania", label: "Океания" },
+];

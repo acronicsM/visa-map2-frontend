@@ -25,6 +25,8 @@ export default function Home() {
           onToggleCategory={s.handleToggleCategory}
           activeSafetyLevels={s.activeSafetyLevels}
           onToggleSafetyLevel={s.handleToggleSafetyLevel}
+          activeRegions={s.activeRegions}
+          onToggleRegion={s.handleToggleRegion}
           travelSpendingTier={s.travelSpendingTier}
           onTravelSpendingTierChange={s.handleTravelSpendingTierChange}
           budgetFilterMode={s.budgetFilterMode}
@@ -52,8 +54,13 @@ export default function Home() {
           onColoringEnabledChange={s.setColoringEnabled}
           isOpen={s.sidebarOpen}
           onToggleSidebar={() => s.setSidebarOpen(!s.sidebarOpen)}
-          activeVacationTypes={s.activeVacationTypes}
-          onToggleVacationType={s.handleToggleVacationType}
+          vacationLadder={s.vacationLadder}
+          onVacationLadderReorder={s.handleVacationLadderReorder}
+          onVacationLadderMoveUp={s.handleVacationLadderMoveUp}
+          onVacationLadderMoveDown={s.handleVacationLadderMoveDown}
+          onVacationLadderToggleEnabled={s.handleVacationLadderToggleEnabled}
+          activeVacationFitBands={s.activeVacationFitBands}
+          onToggleVacationFitBand={s.handleToggleVacationFitBand}
           selectedDepartureCities={s.selectedDepartureCities}
           onToggleDepartureCity={s.handleToggleDepartureCity}
         />
@@ -82,6 +89,7 @@ export default function Home() {
             mapColorMode={s.mapColorMode}
             seasonMonth={s.seasonMonth}
             activeSafetyLevels={s.activeSafetyLevels}
+            activeRegions={s.activeRegions}
             activeAffordabilityBands={s.activeAffordabilityBands}
             activeSeasonTypes={s.activeSeasonTypes}
             seasonDistinctKeys={s.distinctSeasonKeys}
@@ -92,6 +100,9 @@ export default function Home() {
             budgetFilterMode={s.budgetFilterMode}
             exactBudgetAffordabilityBands={s.exactBudgetAffordabilityBands}
             travelCostScoreBands={s.travelCostScoreBands}
+            vacationFitScores={s.vacationFitScores}
+            vacationDestBands={s.vacationDestBands}
+            activeVacationFitBands={s.activeVacationFitBands}
           />
           <div className="pointer-events-none absolute inset-x-0 top-3 z-40 flex justify-center px-3 sm:top-4">
             <PassportCountrySearch

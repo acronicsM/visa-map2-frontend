@@ -26,10 +26,12 @@ export function prefetchPassportBootstrap(
   const currenciesUrl = `${base}/travel-costs/currencies?home_iso2=${encodeURIComponent(iso)}`;
   const exactUrl = `${base}/travel-costs/${encodeURIComponent(iso)}/exact-budget-data`;
   const visaUrl = `${base}/visa-map/${encodeURIComponent(iso)}`;
+  const vacationExoticUrl = `${base}/vacation-exotic/${encodeURIComponent(iso)}`;
 
   void fetchJsonDeduped(scoresUrl).catch(() => {});
   void fetchJsonDeduped(exactUrl).catch(() => {});
   void fetchJsonDeduped(visaUrl).catch(() => {});
+  void fetchJsonDeduped(vacationExoticUrl).catch(() => {});
 
   void fetchJsonDeduped(currenciesUrl)
     .then((res) => {

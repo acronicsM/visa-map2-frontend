@@ -167,9 +167,9 @@ export default function PassportCountrySearch({
   // Синхронизируем query с внешним value (canonical) когда пользователь НЕ редактирует
   useEffect(() => {
     if (!open && query !== canonical) {
-      setQuery(canonical);
+      queueMicrotask(() => setQuery(canonical));
     }
-  }, [canonical, open]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [canonical, open, query]);
 
   const selectCountry = useCallback(
     (c: Country) => {

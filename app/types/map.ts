@@ -3,8 +3,25 @@ export type MapColorMode =
   | "safety"
   | "budget"
   | "season"
+  | "region"
   | "vacation"
   | "flight";
+
+/** Макрорегион restcountries / countries.region */
+export type RegionKey =
+  | "Europe"
+  | "Asia"
+  | "Africa"
+  | "Americas"
+  | "Oceania";
+
+export const ALL_REGION_KEYS: readonly RegionKey[] = [
+  "Europe",
+  "Asia",
+  "Africa",
+  "Americas",
+  "Oceania",
+] as const;
 
 /** Уровень трат на поездку — параметр `budget_tier` в API travel-costs. */
 export type TravelSpendingTier = "cheap" | "normal" | "expensive";
@@ -55,3 +72,25 @@ export type TravelFxRateResponse = {
   currency: string;
   rate: number;
 };
+
+export type VacationDimensionKey =
+  | "beach"
+  | "ski"
+  | "food"
+  | "natural"
+  | "culture"
+  | "exotic";
+
+export type VacationFitBandKey =
+  | "excellent"
+  | "good"
+  | "doubtful"
+  | "unlikely";
+
+export const ALL_VACATION_FIT_BAND_KEYS: readonly VacationFitBandKey[] = [
+  "excellent",
+  "good",
+  "doubtful",
+  "unlikely",
+] as const;
+

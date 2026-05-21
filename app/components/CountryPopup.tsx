@@ -5,7 +5,8 @@ import {
   travelCostLabelForScore,
   type TravelCostScoreBands,
 } from "../lib/travel-cost-score-bands";
-import type { AffordabilityBandKey } from "../types/map";
+import type { AffordabilityBandKey, VacationFitBandKey } from "../types/map";
+import { VACATION_FIT_BAND_LABELS } from "../lib/vacation-fit";
 
 interface VisaItem {
   id: string;
@@ -26,6 +27,8 @@ interface Country {
   safety_level?: string | null;
   cost_score?: number | null;
   exact_budget_band?: AffordabilityBandKey | null;
+  vacation_score?: number | null;
+  vacation_fit_band?: VacationFitBandKey | null;
 }
 
 interface Props {
@@ -98,6 +101,14 @@ export default function CountryPopup({
 
   const bands = costScoreBands ?? DEFAULT_TRAVEL_COST_SCORE_BANDS;
   const safetyText = safetyLabel(country.safety_level);
+  const vacationText =
+    country.vacation_score != null
+      ? `Тип отдыха: ${Math.round(country.vacation_score)} — ${
+          country.vacation_fit_band
+            ? VACATION_FIT_BAND_LABELS[country.vacation_fit_band]
+            : "—"
+        }`
+      : null;
   const costText = country.exact_budget_band
     ? EXACT_BUDGET_LABELS[country.exact_budget_band]
     : costLabel(country.cost_score, bands);
@@ -159,10 +170,11 @@ export default function CountryPopup({
           </div>
         </div>
 
-        {(safetyText || costText) && (
+        {(safetyText || costText || vacationText) && (
           <div className="space-y-2 text-xs text-slate-600 border-t border-slate-100 pt-3">
             {safetyText && <p className="leading-snug">{safetyText}</p>}
             {costText && <p className="leading-snug">{costText}</p>}
+            {vacationText && <p className="leading-snug">{vacationText}</p>}
           </div>
         )}
       </div>

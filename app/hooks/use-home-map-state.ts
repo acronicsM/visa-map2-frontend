@@ -10,18 +10,26 @@ import {
 } from "react";
 import {
   ALL_AFFORDABILITY_BAND_KEYS,
+  ALL_DIRECT_FLIGHT_BAND_KEYS,
   ALL_REGION_KEYS,
   ALL_VACATION_FIT_BAND_KEYS,
   type AffordabilityBandKey,
   type BudgetFilterMode,
+  type DirectFlightBandKey,
+  type DirectFlightStatus,
   type ExactBudgetData,
   type MapColorMode,
-  type TravelCurrencyListResponse,
   type TravelFxRateResponse,
   type TravelSpendingTier,
   type VacationDimensionKey,
   type VacationFitBandKey,
+  type VisaMapItem,
+  type PassportBootstrapStatus,
 } from "../types/map";
+import {
+  mergeDirectCountriesMaps,
+  type DirectCountriesResponse,
+} from "../lib/direct-flight";
 import type { MatchingCountryRow } from "../types/matching-country";
 import type { TravelCostScoreBands } from "../lib/travel-cost-score-bands";
 import {
@@ -30,6 +38,7 @@ import {
   normalizeBudgetCurrency,
 } from "../lib/budget-currency";
 import { fetchJsonDeduped } from "../lib/json-fetch-dedupe";
+import { fetchPassportBootstrap } from "../lib/passport-bootstrap";
 import { prefetchPassportBootstrap } from "../lib/passport-bootstrap-prefetch";
 import { getSeasonFilterRowPresentation } from "../lib/season-colors";
 import {
@@ -58,6 +67,14 @@ const ALL_CATEGORIES = new Set(["free", "evisa", "voa", "embassy", "unavailable"
 const ALL_SAFETY_LEVELS = new Set(["safe", "unsafe", "dangerous"]);
 const ALL_REGIONS = new Set<string>(ALL_REGION_KEYS);
 const DEFAULT_EXACT_TRIP_DAYS = "10";
+const EMPTY_SCORES_BY_TIER: Record<
+  TravelSpendingTier,
+  Record<string, number>
+> = {
+  cheap: {},
+  normal: {},
+  expensive: {},
+};
 
 interface CountryShortApi {
   iso2: string;
@@ -140,6 +157,17 @@ export function useHomeMapState() {
   const [selectedDepartureCities, setSelectedDepartureCities] = useState<
     Set<string>
   >(() => new Set());
+  const [activeDirectFlightBands, setActiveDirectFlightBands] = useState<
+    Set<DirectFlightBandKey>
+  >(() => new Set(ALL_DIRECT_FLIGHT_BAND_KEYS));
+  const [directFlightStatus, setDirectFlightStatus] =
+    useState<DirectFlightStatus>("idle");
+  const [directFlightByDest, setDirectFlightByDest] = useState<
+    Record<string, boolean>
+  >({});
+  const [directFlightError, setDirectFlightError] = useState<string | null>(
+    null,
+  );
   const [matchingCountries, setMatchingCountries] = useState<
     MatchingCountryRow[]
   >([]);
@@ -147,7 +175,12 @@ export function useHomeMapState() {
   const [countryMetaByIso, setCountryMetaByIso] = useState<
     Map<string, { name_ru: string; flag_emoji?: string | null }>
   >(() => new Map());
-  const [travelCostScores, setTravelCostScores] = useState<Record<string, number>>({});
+  const [travelCostScoresByTier, setTravelCostScoresByTier] = useState<
+    Record<TravelSpendingTier, Record<string, number>>
+  >(() => ({ ...EMPTY_SCORES_BY_TIER }));
+  const [visaMapItems, setVisaMapItems] = useState<VisaMapItem[] | null>(null);
+  const [passportBootstrapStatus, setPassportBootstrapStatus] =
+    useState<PassportBootstrapStatus>("idle");
   const [budgetFilterMode, setBudgetFilterMode] =
     useState<BudgetFilterMode>("tier");
   const [exactBudgetAmount, setExactBudgetAmountState] = useState("");
@@ -176,6 +209,9 @@ export function useHomeMapState() {
   } | null>(null);
   /** Пользователь очистил сумму — не подставлять снова доход из API (см. useEffect ниже). */
   const suppressExactBudgetIncomeAutofillRef = useRef(false);
+  const vacationExoticLoadedPassportRef = useRef("");
+  const exactBudgetLoadedPassportRef = useRef("");
+  const passportBootstrapSeqRef = useRef(0);
 
   const setExactBudgetAmount = useCallback((value: string) => {
     setExactBudgetAmountState(value);
@@ -183,6 +219,22 @@ export function useHomeMapState() {
   }, []);
 
   useDebugValue(travelCostScoreBandsStatus, (s) => `score-bands: ${s}`);
+
+  const travelCostScores = useMemo(
+    () => travelCostScoresByTier[travelSpendingTier] ?? {},
+    [travelCostScoresByTier, travelSpendingTier],
+  );
+
+  const vacationWeights = useMemo(
+    () => ladderToWeights(vacationLadder),
+    [vacationLadder],
+  );
+
+  const shouldLoadVacationExotic = useMemo(() => {
+    if (!passport.trim()) return false;
+    if (mapColorMode === "vacation") return true;
+    return Object.values(vacationWeights).some((w) => w > 0);
+  }, [passport, mapColorMode, vacationWeights]);
 
   const setMapColorMode = useCallback((mode: MapColorMode) => {
     setMapColorModeState(mode);
@@ -227,12 +279,82 @@ export function useHomeMapState() {
     const iso = passport.trim().toUpperCase();
     if (!iso) {
       queueMicrotask(() => {
-        if (!cancelled) setVacationExoticByDest({});
+        if (!cancelled) {
+          setPassportBootstrapStatus("idle");
+          setTravelCostScoresByTier({ ...EMPTY_SCORES_BY_TIER });
+          setVisaMapItems(null);
+        }
       });
       return () => {
         cancelled = true;
       };
     }
+
+    const seq = ++passportBootstrapSeqRef.current;
+    queueMicrotask(() => {
+      if (!cancelled && seq === passportBootstrapSeqRef.current) {
+        setPassportBootstrapStatus("loading");
+        setVisaMapItems([]);
+      }
+    });
+
+    void fetchPassportBootstrap(API_BASE, iso)
+      .then((res) => {
+        if (cancelled || seq !== passportBootstrapSeqRef.current) return;
+        if (!res.ok || !res.data) {
+          setPassportBootstrapStatus("error");
+          setTravelCostScoresByTier({ ...EMPTY_SCORES_BY_TIER });
+          setVisaMapItems([]);
+          return;
+        }
+        const data = res.data;
+        setTravelCostScoresByTier(data.scores_by_tier);
+        setVisaMapItems(data.visa_map);
+        const { available, selectedDefault } = budgetCurrencySelectionFromList(
+          data.currencies,
+        );
+        setAvailableBudgetCurrencies(available);
+        setUsdToBudgetCurrencyRate(
+          selectedDefault === DEFAULT_BUDGET_CURRENCY ? 1 : null,
+        );
+        setExactBudgetCurrency(selectedDefault);
+        setPassportBootstrapStatus("ready");
+      })
+      .catch(() => {
+        if (cancelled || seq !== passportBootstrapSeqRef.current) return;
+        setPassportBootstrapStatus("error");
+        setTravelCostScoresByTier({ ...EMPTY_SCORES_BY_TIER });
+        setVisaMapItems([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [passport]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const iso = passport.trim().toUpperCase();
+    if (!iso || !shouldLoadVacationExotic) {
+      if (!iso) {
+        queueMicrotask(() => {
+          if (!cancelled) {
+            vacationExoticLoadedPassportRef.current = "";
+            setVacationExoticByDest({});
+          }
+        });
+      }
+      return () => {
+        cancelled = true;
+      };
+    }
+    if (vacationExoticLoadedPassportRef.current === iso) {
+      return () => {
+        cancelled = true;
+      };
+    }
+    vacationExoticLoadedPassportRef.current = iso;
+
     void fetchJsonDeduped(`${API_BASE}/vacation-exotic/${encodeURIComponent(iso)}`)
       .then((res) => {
         if (cancelled) return;
@@ -249,12 +371,7 @@ export function useHomeMapState() {
     return () => {
       cancelled = true;
     };
-  }, [passport]);
-
-  const vacationWeights = useMemo(
-    () => ladderToWeights(vacationLadder),
-    [vacationLadder],
-  );
+  }, [passport, shouldLoadVacationExotic]);
 
   const vacationFit = useMemo(() => {
     const hasWeight = Object.values(vacationWeights).some((w) => w > 0);
@@ -400,8 +517,8 @@ export function useHomeMapState() {
   }, []);
 
   const warmPassportCaches = useCallback((iso2: string) => {
-    prefetchPassportBootstrap(API_BASE, iso2, travelSpendingTier);
-  }, [travelSpendingTier]);
+    prefetchPassportBootstrap(API_BASE, iso2);
+  }, []);
 
   const handlePassportChange = useCallback((iso2: string) => {
     setPassport(iso2);
@@ -409,91 +526,57 @@ export function useHomeMapState() {
     setExactBudgetAmountState("");
     setExactBudgetDays(DEFAULT_EXACT_TRIP_DAYS);
     setExactBudgetData(null);
+    exactBudgetLoadedPassportRef.current = "";
+    vacationExoticLoadedPassportRef.current = "";
     pendingBudgetConversionRef.current = null;
     setExactBudgetCurrency(DEFAULT_BUDGET_CURRENCY);
     setUsdToBudgetCurrencyRate(1);
+    setSelectedDepartureCities(new Set());
+    setActiveDirectFlightBands(new Set(ALL_DIRECT_FLIGHT_BAND_KEYS));
+    setDirectFlightStatus("idle");
+    setDirectFlightByDest({});
+    setDirectFlightError(null);
+    setVacationExoticByDest({});
+    setTravelCostScoresByTier({ ...EMPTY_SCORES_BY_TIER });
+    setVisaMapItems(null);
+    setPassportBootstrapStatus(iso2.trim() ? "loading" : "idle");
   }, []);
 
   useEffect(() => {
     let cancelled = false;
-    if (!passport.trim()) {
-      queueMicrotask(() => {
-        if (!cancelled) setTravelCostScores({});
-      });
-      return () => {
-        cancelled = true;
-      };
-    }
-    const isoUpper = passport.trim().toUpperCase();
-    const scoresUrl = `${API_BASE}/travel-costs/${encodeURIComponent(isoUpper)}?budget_tier=${travelSpendingTier}`;
-    void fetchJsonDeduped(scoresUrl)
-      .then((res) => {
-        if (cancelled) return;
-        if (!res.ok) {
-          setTravelCostScores({});
-          return;
-        }
-        const data = res.data as { scores?: Record<string, number> };
-        setTravelCostScores(data.scores ?? {});
-      })
-      .catch(() => {
-        if (!cancelled) setTravelCostScores({});
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [passport, travelSpendingTier]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const currenciesUrl = passport.trim().length
-      ? `${API_BASE}/travel-costs/currencies?home_iso2=${encodeURIComponent(passport.trim().toUpperCase())}`
-      : `${API_BASE}/travel-costs/currencies`;
-    void fetchJsonDeduped(currenciesUrl)
-      .then((res) => {
-        if (cancelled) return;
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`);
-        }
-        const data = res.data as TravelCurrencyListResponse;
-        const { available, selectedDefault } = budgetCurrencySelectionFromList(data);
-        setAvailableBudgetCurrencies(available);
-        setUsdToBudgetCurrencyRate(
-          selectedDefault === DEFAULT_BUDGET_CURRENCY ? 1 : null,
-        );
-        setExactBudgetCurrency(selectedDefault);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setAvailableBudgetCurrencies([DEFAULT_BUDGET_CURRENCY]);
-        setUsdToBudgetCurrencyRate(1);
-        setExactBudgetCurrency(DEFAULT_BUDGET_CURRENCY);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [passport]);
-
-  useEffect(() => {
-    let cancelled = false;
     const iso = passport.trim();
-    if (!iso) {
-      queueMicrotask(() => {
-        if (!cancelled) setExactBudgetData(null);
-      });
+    if (!iso || budgetFilterMode !== "exact") {
+      if (!iso) {
+        queueMicrotask(() => {
+          if (!cancelled) {
+            exactBudgetLoadedPassportRef.current = "";
+            setExactBudgetData(null);
+          }
+        });
+      }
       return () => {
         cancelled = true;
       };
     }
 
-    const isoEncoded = encodeURIComponent(iso.toUpperCase());
+    const isoUpper = iso.toUpperCase();
+    if (exactBudgetLoadedPassportRef.current === isoUpper) {
+      return () => {
+        cancelled = true;
+      };
+    }
+    exactBudgetLoadedPassportRef.current = isoUpper;
+
+    const isoEncoded = encodeURIComponent(isoUpper);
     void fetchJsonDeduped(`${API_BASE}/travel-costs/${isoEncoded}/exact-budget-data`)
       .then((res) => {
+        if (cancelled) return;
         if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`);
+          setExactBudgetData(null);
+          return;
         }
         const data = res.data as ExactBudgetData;
-        if (!cancelled) setExactBudgetData(data);
+        setExactBudgetData(data);
       })
       .catch(() => {
         if (!cancelled) setExactBudgetData(null);
@@ -501,7 +584,7 @@ export function useHomeMapState() {
     return () => {
       cancelled = true;
     };
-  }, [passport]);
+  }, [passport, budgetFilterMode]);
 
   useEffect(() => {
     const seq = ++fxRateFetchSeqRef.current;
@@ -779,14 +862,135 @@ export function useHomeMapState() {
     [setMapColorMode],
   );
 
-  const handleToggleDepartureCity = useCallback((city: string) => {
+  const handleAddDepartureCity = useCallback((city: string) => {
+    const trimmed = city.trim();
+    if (!trimmed) return;
     setSelectedDepartureCities((prev) => {
+      if (prev.has(trimmed)) return prev;
       const next = new Set(prev);
-      if (next.has(city)) next.delete(city);
-      else next.add(city);
+      next.add(trimmed);
+      return next;
+    });
+    setActiveDirectFlightBands(new Set(ALL_DIRECT_FLIGHT_BAND_KEYS));
+    setMapColorModeState("flight");
+    setColoringEnabled(true);
+  }, []);
+
+  const handleRemoveDepartureCity = useCallback((city: string) => {
+    setSelectedDepartureCities((prev) => {
+      if (!prev.has(city)) return prev;
+      const next = new Set(prev);
+      next.delete(city);
       return next;
     });
   }, []);
+
+  const handleToggleDirectFlightBand = useCallback((key: DirectFlightBandKey) => {
+    setActiveDirectFlightBands((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+    setMapColorModeState("flight");
+    setColoringEnabled(true);
+  }, []);
+
+  const departureCitiesKey = useMemo(
+    () => [...selectedDepartureCities].sort().join("\0"),
+    [selectedDepartureCities],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    const iso2 = passport.trim().toUpperCase();
+    const cities = [...selectedDepartureCities];
+
+    if (!iso2 || cities.length === 0) {
+      queueMicrotask(() => {
+        if (!cancelled) {
+          setDirectFlightStatus("idle");
+          setDirectFlightByDest({});
+          setDirectFlightError(null);
+        }
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    queueMicrotask(() => {
+      if (!cancelled) {
+        setDirectFlightStatus("loading");
+        setDirectFlightError(null);
+      }
+    });
+
+    void (async () => {
+      const invalidCities: string[] = [];
+      const maps: Record<string, boolean>[] = [];
+
+      await Promise.all(
+        cities.map(async (city) => {
+          const url =
+            `${API_BASE}/flights/direct-countries?` +
+            `city=${encodeURIComponent(city)}&country_iso2=${encodeURIComponent(iso2)}`;
+          try {
+            const res = await fetchJsonDeduped(url);
+            if (cancelled) return;
+            if (res.status === 404) {
+              invalidCities.push(city);
+              return;
+            }
+            if (!res.ok || res.data == null || typeof res.data !== "object") {
+              throw new Error(`HTTP ${res.status}`);
+            }
+            const data = res.data as DirectCountriesResponse;
+            maps.push(data.direct_countries ?? {});
+          } catch {
+            if (!cancelled) {
+              throw new Error("fetch failed");
+            }
+          }
+        }),
+      );
+
+      if (cancelled) return;
+
+      if (invalidCities.length > 0) {
+        setSelectedDepartureCities((prev) => {
+          const next = new Set(prev);
+          for (const city of invalidCities) next.delete(city);
+          return next;
+        });
+        setDirectFlightError(
+          invalidCities.length === 1
+            ? `Город «${invalidCities[0]}» не найден в справочнике`
+            : "Некоторые города не найдены в справочнике",
+        );
+      }
+
+      const merged = mergeDirectCountriesMaps(maps);
+      const remaining = cities.filter((c) => !invalidCities.includes(c));
+      if (remaining.length === 0) {
+        setDirectFlightStatus("idle");
+        setDirectFlightByDest({});
+        return;
+      }
+
+      setDirectFlightByDest(merged);
+      setDirectFlightStatus("ready");
+    })().catch(() => {
+      if (cancelled) return;
+      setDirectFlightStatus("error");
+      setDirectFlightByDest({});
+      setDirectFlightError("Не удалось загрузить данные о прямых перелётах");
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [passport, departureCitiesKey, selectedDepartureCities]);
 
   return {
     passport,
@@ -806,10 +1010,17 @@ export function useHomeMapState() {
     vacationFitScores: vacationFit.scores,
     vacationDestBands: vacationFit.destBand,
     selectedDepartureCities,
+    activeDirectFlightBands,
+    directFlightStatus,
+    directFlightByDest,
+    directFlightError,
     matchingCountries,
     matchingListReady,
     countryMetaByIso,
     travelCostScores,
+    travelCostScoresByTier,
+    visaMapItems,
+    passportBootstrapStatus,
     budgetFilterMode,
     exactBudgetAmount,
     exactBudgetDays,
@@ -846,7 +1057,9 @@ export function useHomeMapState() {
     handleVacationLadderMoveDown,
     handleVacationLadderToggleEnabled,
     handleToggleVacationFitBand,
-    handleToggleDepartureCity,
+    handleAddDepartureCity,
+    handleRemoveDepartureCity,
+    handleToggleDirectFlightBand,
     setColoringEnabled,
   };
 }

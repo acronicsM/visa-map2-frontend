@@ -94,3 +94,28 @@ export const ALL_VACATION_FIT_BAND_KEYS: readonly VacationFitBandKey[] = [
   "unlikely",
 ] as const;
 
+export type DirectFlightBandKey = "direct" | "no_direct";
+
+export const ALL_DIRECT_FLIGHT_BAND_KEYS: readonly DirectFlightBandKey[] = [
+  "direct",
+  "no_direct",
+] as const;
+
+export type DirectFlightStatus = "idle" | "loading" | "ready" | "error";
+
+/** Элемент visa-map / passport-bootstrap. */
+export type VisaMapItem = {
+  id: string;
+  iso2: string;
+  visa_category: string;
+  confidence_level: number;
+};
+
+export type PassportBootstrapResponse = {
+  home_iso2: string;
+  visa_map: VisaMapItem[];
+  scores_by_tier: Record<TravelSpendingTier, Record<string, number>>;
+  currencies: TravelCurrencyListResponse;
+};
+
+export type PassportBootstrapStatus = "idle" | "loading" | "ready" | "error";

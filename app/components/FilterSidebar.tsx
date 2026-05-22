@@ -1,12 +1,14 @@
 "use client";
 
 import { Fragment, useId, useLayoutEffect, useRef, useState } from "react";
-import DepartureCityMultiSelect from "./departure-city-multi-select";
+import DepartureCityCombobox from "./departure-city-combobox";
 import VacationPriorityLadderDnD from "./vacation-priority-ladder-dnd";
 import type { VacationLadderItem } from "../lib/vacation-fit";
 import type {
   AffordabilityBandKey,
   BudgetFilterMode,
+  DirectFlightBandKey,
+  DirectFlightStatus,
   MapColorMode,
   TravelSpendingTier,
   VacationFitBandKey,
@@ -19,6 +21,8 @@ import {
   MAP_REGION_FILL_COLORS,
   MAP_SAFETY_FILL_COLORS,
   MAP_VISA_FILL_COLORS,
+  MAP_FLIGHT_FILL_COLORS,
+  SIDEBAR_FLIGHT_FILTER_ROWS,
   SIDEBAR_REGION_FILTER_ROWS,
   SIDEBAR_SAFETY_FILTER_ROWS,
   SIDEBAR_VISA_FILTER_ROWS,
@@ -49,15 +53,6 @@ const VACATION_FIT_OPTIONS: { key: VacationFitBandKey; label: string }[] = [
   { key: "unlikely", label: VACATION_FIT_BAND_LABELS.unlikely },
 ];
 
-/** Заглушка: города вылета до появления API */
-export const STUB_DEPARTURE_CITIES = [
-  "Москва",
-  "Санкт-Петербург",
-  "Екатеринбург",
-  "Новосибирск",
-  "Казань",
-];
-
 const FILTER_GROUPS = [
   { key: "citizenship" as const, label: "Визовые режимы" },
   { key: "safety" as const, label: "Безопасность" },
@@ -69,8 +64,6 @@ const FILTER_GROUPS = [
 ];
 
 type FilterGroupKey = (typeof FILTER_GROUPS)[number]["key"];
-
-const STUB_KEYS = new Set<FilterGroupKey>(["flight"]);
 
 const MONTH_OPTIONS: { value: number; label: string }[] = [
   { value: 1, label: "Январь" },
@@ -544,7 +537,12 @@ interface FilterSidebarProps {
   activeVacationFitBands: Set<VacationFitBandKey>;
   onToggleVacationFitBand: (key: VacationFitBandKey) => void;
   selectedDepartureCities: Set<string>;
-  onToggleDepartureCity: (city: string) => void;
+  onAddDepartureCity: (city: string) => void;
+  onRemoveDepartureCity: (city: string) => void;
+  activeDirectFlightBands: Set<DirectFlightBandKey>;
+  onToggleDirectFlightBand: (key: DirectFlightBandKey) => void;
+  directFlightStatus: DirectFlightStatus;
+  directFlightError: string | null;
   /** Панель в оверлее превью: на всю ширину, без анимации сворачивания в 0px */
   layout?: "default" | "drawerEmbed";
   /** Паспорт выбран снаружи панели — скрыть блок «Ваш паспорт» */
@@ -650,7 +648,12 @@ export default function FilterSidebar({
   activeVacationFitBands,
   onToggleVacationFitBand,
   selectedDepartureCities,
-  onToggleDepartureCity,
+  onAddDepartureCity,
+  onRemoveDepartureCity,
+  activeDirectFlightBands,
+  onToggleDirectFlightBand,
+  directFlightStatus,
+  directFlightError,
   layout: layoutProp = "default",
   hidePassportInPanel = false,
 }: FilterSidebarProps) {
@@ -670,7 +673,6 @@ export default function FilterSidebar({
 
   function handleColorClick(e: React.MouseEvent, key: FilterGroupKey) {
     e.stopPropagation();
-    if (STUB_KEYS.has(key)) return;
 
     if (mapColorMode === key && coloringEnabled) {
       onColoringEnabledChange(false);
@@ -981,14 +983,51 @@ export default function FilterSidebar({
 
                   {isSectionOpen && key === "flight" && (
                     <div className="px-3 pb-4 flex flex-col gap-3">
-                      <DepartureCityMultiSelect
-                        cityOptions={STUB_DEPARTURE_CITIES}
-                        selected={selectedDepartureCities}
-                        onToggle={onToggleDepartureCity}
+                      <DepartureCityCombobox
+                        passport={passport}
+                        selectedCities={selectedDepartureCities}
+                        onAddCity={onAddDepartureCity}
+                        onRemoveCity={onRemoveDepartureCity}
                       />
-                      <span className="text-[13px] text-outline">
-                        Скоро будет доступно
-                      </span>
+                      {directFlightStatus === "loading" ? (
+                        <p className="text-[12px] leading-snug text-outline">
+                          Загрузка маршрутов…
+                        </p>
+                      ) : null}
+                      {directFlightError ? (
+                        <p className="text-[12px] leading-snug text-error">
+                          {directFlightError}
+                        </p>
+                      ) : null}
+                      {selectedDepartureCities.size === 0 ? (
+                        <p className="text-[12px] leading-snug text-outline">
+                          Выберите город вылета
+                        </p>
+                      ) : (
+                        <div className="flex flex-col gap-1">
+                          {SIDEBAR_FLIGHT_FILTER_ROWS.map(({ key: rowKey, label }) => (
+                            <div key={rowKey} className="flex items-center justify-between">
+                              <div className="flex items-center gap-0.5">
+                                <span
+                                  className="h-3.5 w-3.5 shrink-0 rounded-full"
+                                  style={{
+                                    backgroundColor: MAP_FLIGHT_FILL_COLORS[rowKey],
+                                  }}
+                                />
+                                <span className="text-[14px] text-on-surface">{label}</span>
+                              </div>
+                              <Toggle
+                                checked={activeDirectFlightBands.has(
+                                  rowKey as DirectFlightBandKey,
+                                )}
+                                onChange={() =>
+                                  onToggleDirectFlightBand(rowKey as DirectFlightBandKey)
+                                }
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

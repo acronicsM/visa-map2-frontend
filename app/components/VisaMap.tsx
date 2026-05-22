@@ -26,12 +26,17 @@ import {
   MAP_REGION_FILL_COLORS,
   MAP_SAFETY_FILL_COLORS,
   MAP_VISA_FILL_COLORS,
+  MAP_FLIGHT_FILL_COLORS,
 } from "../lib/map-fill-palettes";
+import { directFlightBandForDest } from "../lib/direct-flight";
 import type {
   AffordabilityBandKey,
   BudgetFilterMode,
+  DirectFlightBandKey,
+  DirectFlightStatus,
   MapColorMode,
   VacationFitBandKey,
+  VisaMapItem,
 } from "../types/map";
 import type { MatchingCountryRow } from "../types/matching-country";
 
@@ -109,6 +114,22 @@ interface VisaMapProps {
   vacationFitScores: Record<string, number>;
   vacationDestBands: Record<string, VacationFitBandKey>;
   activeVacationFitBands: Set<VacationFitBandKey>;
+  selectedDepartureCities: Set<string>;
+  directFlightByDest: Record<string, boolean>;
+  activeDirectFlightBands: Set<DirectFlightBandKey>;
+  directFlightStatus: DirectFlightStatus;
+  /** Из passport-bootstrap; undefined — внутренний fetch visa-map */
+  visaMapItems?: VisaMapItem[] | null;
+}
+
+function visaItemsToDetails(items: VisaMapItem[] | null | undefined): VisaDetail[] {
+  return (items ?? []).map((item) => ({
+    id: item.id,
+    iso2: item.iso2,
+    visa_category: item.visa_category,
+    confidence_level: item.confidence_level,
+    max_stay_days: null,
+  }));
 }
 
 function normAttr(raw: string | null | undefined): string {
@@ -366,6 +387,39 @@ function applyVacationFitColors(
   mapInstance.setPaintProperty("countries-fill", "fill-opacity", opacityExpression);
 }
 
+function applyFlightDirectColors(
+  mapInstance: maplibregl.Map,
+  directByDest: Record<string, boolean>,
+  passes: (iso2: string) => boolean,
+  enabled: boolean,
+) {
+  if (!enabled) {
+    mapInstance.setPaintProperty("countries-fill", "fill-opacity", 0);
+    return;
+  }
+  const isoKeys = Object.keys(directByDest);
+  if (isoKeys.length === 0) {
+    mapInstance.setPaintProperty("countries-fill", "fill-color", NEUTRAL_COUNTRIES_COLOR);
+    mapInstance.setPaintProperty("countries-fill", "fill-opacity", DIM_FILL_OPACITY);
+    return;
+  }
+  const colorExpression: unknown[] = ["match", ["get", "iso2"]];
+  const opacityExpression: unknown[] = ["match", ["get", "iso2"]];
+
+  for (const iso2 of isoKeys) {
+    const band = directFlightBandForDest(iso2, directByDest);
+    const ok = passes(iso2);
+    const col = MAP_FLIGHT_FILL_COLORS[band] ?? NEUTRAL_COUNTRIES_COLOR;
+    colorExpression.push(iso2, ok ? col : NEUTRAL_COUNTRIES_COLOR);
+    opacityExpression.push(iso2, ok ? HIGH_FILL_OPACITY : DIM_FILL_OPACITY);
+  }
+  colorExpression.push(NEUTRAL_COUNTRIES_COLOR);
+  opacityExpression.push(DIM_FILL_OPACITY);
+
+  mapInstance.setPaintProperty("countries-fill", "fill-color", colorExpression);
+  mapInstance.setPaintProperty("countries-fill", "fill-opacity", opacityExpression);
+}
+
 function setSeasonLayerVisibility(mapInstance: maplibregl.Map, visible: boolean) {
   if (!mapInstance.getLayer(SEASONS_LAYER_ID)) return;
   mapInstance.setLayoutProperty(
@@ -418,6 +472,11 @@ export default function VisaMap({
   vacationFitScores,
   vacationDestBands,
   activeVacationFitBands,
+  selectedDepartureCities,
+  directFlightByDest,
+  activeDirectFlightBands,
+  directFlightStatus,
+  visaMapItems,
 }: VisaMapProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
@@ -459,6 +518,11 @@ export default function VisaMap({
   const vacationFitScoresRef = useRef(vacationFitScores);
   const vacationDestBandsRef = useRef(vacationDestBands);
   const activeVacationFitBandsRef = useRef(activeVacationFitBands);
+  const selectedDepartureCitiesRef = useRef(selectedDepartureCities);
+  const directFlightByDestRef = useRef(directFlightByDest);
+  const activeDirectFlightBandsRef = useRef(activeDirectFlightBands);
+  const directFlightStatusRef = useRef(directFlightStatus);
+  const visaMapItemsRef = useRef(visaMapItems);
 
   const [popupCountry, setPopupCountry] = useState<CountryInfo | null>(null);
   const [popupVisa, setPopupVisa] = useState<VisaDetail | null>(null);
@@ -537,6 +601,26 @@ export default function VisaMap({
   useEffect(() => {
     activeVacationFitBandsRef.current = activeVacationFitBands;
   }, [activeVacationFitBands]);
+
+  useEffect(() => {
+    selectedDepartureCitiesRef.current = selectedDepartureCities;
+  }, [selectedDepartureCities]);
+
+  useEffect(() => {
+    directFlightByDestRef.current = directFlightByDest;
+  }, [directFlightByDest]);
+
+  useEffect(() => {
+    activeDirectFlightBandsRef.current = activeDirectFlightBands;
+  }, [activeDirectFlightBands]);
+
+  useEffect(() => {
+    directFlightStatusRef.current = directFlightStatus;
+  }, [directFlightStatus]);
+
+  useEffect(() => {
+    visaMapItemsRef.current = visaMapItems;
+  }, [visaMapItems]);
 
   const refreshMapPaint = useCallback(() => {
     const m = map.current;
@@ -646,6 +730,24 @@ export default function VisaMap({
         // страны вне сезонного GeoJSON, напр. отдельные территории).
         if (sk && !activeSeasonTypesRef.current.has(sk)) {
           return false;
+        }
+      }
+      const departureCities = selectedDepartureCitiesRef.current;
+      const flightStatus = directFlightStatusRef.current;
+      if (departureCities.size > 0 && flightStatus === "ready") {
+        const homeIso = String(passportRef.current ?? "").trim().toUpperCase();
+        if (isoUpper !== homeIso) {
+          const flightBands = activeDirectFlightBandsRef.current;
+          if (flightBands.size === 0) {
+            return false;
+          }
+          const band = directFlightBandForDest(
+            isoUpper,
+            directFlightByDestRef.current,
+          );
+          if (!flightBands.has(band)) {
+            return false;
+          }
         }
       }
       return true;
@@ -790,8 +892,28 @@ export default function VisaMap({
       return;
     }
 
+    if (mode === "flight") {
+      if (activeDirectFlightBandsRef.current.size === 0) {
+        m.setPaintProperty("countries-fill", "fill-opacity", 0);
+        return;
+      }
+      applyFlightDirectColors(
+        m,
+        directFlightByDestRef.current,
+        passesForNonSeasonLayers,
+        true,
+      );
+      return;
+    }
+
     m.setPaintProperty("countries-fill", "fill-opacity", 0);
   }, []);
+
+  useEffect(() => {
+    if (visaMapItems === undefined) return;
+    visaDataRef.current = visaItemsToDetails(visaMapItems);
+    refreshMapPaint();
+  }, [visaMapItems, refreshMapPaint]);
 
   useEffect(() => {
     runSeasonGeodataFetchRef.current = () => {
@@ -936,6 +1058,7 @@ export default function VisaMap({
   }, [
     refreshMapPaint,
     passport,
+    visaMapItems,
     mapColorMode,
     coloringEnabled,
     activeCategories,
@@ -952,12 +1075,17 @@ export default function VisaMap({
     vacationFitScores,
     vacationDestBands,
     activeVacationFitBands,
+    selectedDepartureCities,
+    directFlightByDest,
+    activeDirectFlightBands,
+    directFlightStatus,
   ]);
 
   useEffect(() => {
+    if (visaMapItems !== undefined) return;
     if (!mapLoadedRef.current) return;
     void loadVisaMap(passport);
-  }, [passport, loadVisaMap]);
+  }, [passport, loadVisaMap, visaMapItems]);
 
   useEffect(() => {
     const container = mapContainer.current;
@@ -1032,7 +1160,11 @@ export default function VisaMap({
 
         mapLoadedRef.current = true;
         resizeMap();
-        await loadVisaMapRef.current(passportRef.current);
+        if (visaMapItemsRef.current !== undefined) {
+          visaDataRef.current = visaItemsToDetails(visaMapItemsRef.current);
+        } else {
+          await loadVisaMapRef.current(passportRef.current);
+        }
         refreshMapPaintRef.current();
         runSeasonGeodataFetchRef.current();
       } catch (error) {

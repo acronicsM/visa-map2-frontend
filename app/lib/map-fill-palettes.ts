@@ -49,3 +49,13 @@ export const SIDEBAR_REGION_FILTER_ROWS: { key: string; label: string }[] = [
   { key: "Americas", label: "Америка" },
   { key: "Oceania", label: "Океания" },
 ];
+
+export const MAP_FLIGHT_FILL_COLORS: Record<string, string> = {
+  direct: "#22c55e",
+  no_direct: "#6b7280",
+};
+
+export const SIDEBAR_FLIGHT_FILTER_ROWS: { key: string; label: string }[] = [
+  { key: "direct", label: "Есть" },
+  { key: "no_direct", label: "Нет" },
+];

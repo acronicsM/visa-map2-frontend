@@ -62,7 +62,12 @@ export default function Home() {
           activeVacationFitBands={s.activeVacationFitBands}
           onToggleVacationFitBand={s.handleToggleVacationFitBand}
           selectedDepartureCities={s.selectedDepartureCities}
-          onToggleDepartureCity={s.handleToggleDepartureCity}
+          onAddDepartureCity={s.handleAddDepartureCity}
+          onRemoveDepartureCity={s.handleRemoveDepartureCity}
+          activeDirectFlightBands={s.activeDirectFlightBands}
+          onToggleDirectFlightBand={s.handleToggleDirectFlightBand}
+          directFlightStatus={s.directFlightStatus}
+          directFlightError={s.directFlightError}
         />
         {!s.sidebarOpen && (
           <button
@@ -85,6 +90,7 @@ export default function Home() {
         <div className="relative flex-1 overflow-hidden">
           <VisaMap
             passport={s.passport}
+            visaMapItems={s.visaMapItems}
             activeCategories={s.activeCategories}
             mapColorMode={s.mapColorMode}
             seasonMonth={s.seasonMonth}
@@ -103,6 +109,10 @@ export default function Home() {
             vacationFitScores={s.vacationFitScores}
             vacationDestBands={s.vacationDestBands}
             activeVacationFitBands={s.activeVacationFitBands}
+            selectedDepartureCities={s.selectedDepartureCities}
+            directFlightByDest={s.directFlightByDest}
+            activeDirectFlightBands={s.activeDirectFlightBands}
+            directFlightStatus={s.directFlightStatus}
           />
           <div className="pointer-events-none absolute inset-x-0 top-3 z-40 flex justify-center px-3 sm:top-4">
             <PassportCountrySearch
